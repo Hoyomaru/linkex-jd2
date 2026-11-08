@@ -15,7 +15,7 @@ import {
   type QueueItem,
 } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
-import { singleTopFolder } from '../shared/files';
+import { matchesQuery, singleTopFolder } from '../shared/files';
 import { engineView } from '../ui/live';
 
 interface WalkProgress {
@@ -158,6 +158,9 @@ button[data-icon="pause"]::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 1
 .item .tag:empty { display: none; }
 .item .tag.ng { color: var(--danger); }
 .item .size { color: var(--muted); white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.search { width: 100%; font: inherit; font-size: 12px; min-height: 32px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.search::placeholder { color: var(--muted); }
+.list-empty { color: var(--muted); font-size: 12px; padding: 10px 0; text-align: center; }
 .pick-actions { display: flex; gap: 6px; }
 .pick-actions .primary { flex: 1; }
 `;
@@ -186,8 +189,9 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
           <button data-act="pick">選んで追加</button>
         </div>
         <label class="check"><input type="checkbox" data-act="autostart" checked /> 追加したら開始する</label>
+        <input type="search" class="search" placeholder="ファイル名・フォルダ名で絞り込み" aria-label="ファイルを検索" hidden />
         <div class="pick-head" hidden>
-          <label class="check"><input type="checkbox" data-act="select-all" checked /> すべて選択</label>
+          <label class="check"><input type="checkbox" data-act="select-all" checked /> <span class="select-all-label">すべて選択</span></label>
           <span class="pick-count"></span>
         </div>
         <div class="list" hidden></div>
@@ -226,6 +230,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const pickHead = q<HTMLDivElement>('.pick-head');
   const autostart = q<HTMLInputElement>('[data-act="autostart"]');
   const selectAll = q<HTMLInputElement>('[data-act="select-all"]');
+  const search = q<HTMLInputElement>('.search');
   const mini = q<HTMLSpanElement>('.head .mini');
   let walked: { shareName: string; files: WalkedFile[] } | null = null;
   /** このリンクのファイルで、キューに入っているもの（共有側のID → 件） */
@@ -426,14 +431,17 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
 
   // ---------- 選んで追加 ----------
   const boxes = () => Array.from(list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+  /** 選べて、いま表示されているもの（絞り込んでいるときは、追加も件数もこれだけが対象） */
+  const shownBoxes = () => boxes().filter((b) => !b.disabled && !b.closest<HTMLElement>('.item')!.hidden);
 
   const updatePickCount = () => {
     if (!walked) return;
-    const selectable = boxes().filter((b) => !b.disabled);
-    const checked = selectable.filter((b) => b.checked);
+    const visible = shownBoxes();
+    const checked = visible.filter((b) => b.checked);
     const bytes = checked.reduce((sum, b) => sum + (walked!.files[Number(b.dataset.index)]?.size ?? 0), 0);
-    q('.pick-count').textContent = `${checked.length} / ${selectable.length}件・${formatBytes(bytes)}`;
-    selectAll.checked = selectable.length > 0 && checked.length === selectable.length;
+    q('.pick-count').textContent = `${checked.length} / ${visible.length}件・${formatBytes(bytes)}`;
+    selectAll.checked = visible.length > 0 && checked.length === visible.length;
+    selectAll.disabled = visible.length === 0;
     q<HTMLButtonElement>('[data-act="add-selected"]').disabled = checked.length === 0;
   };
 
@@ -460,10 +468,44 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     return selectable;
   };
 
+  /** 検索欄の語で一覧を絞り込む（選んだ状態はそのまま残す） */
+  const applySearch = () => {
+    if (!walked) return;
+    const query = search.value;
+    let shown = 0;
+    for (const box of boxes()) {
+      const row = box.closest<HTMLElement>('.item')!;
+      row.hidden = !matchesQuery(walked.files[Number(box.dataset.index)], query);
+      if (!row.hidden) shown++;
+    }
+    const filtering = query.trim() !== '';
+    q('.select-all-label').textContent = filtering ? '表示中をすべて選択' : 'すべて選択';
+    let empty = list.querySelector<HTMLDivElement>('.list-empty');
+    if (shown === 0) {
+      if (!empty) {
+        empty = document.createElement('div');
+        empty.className = 'list-empty';
+        empty.textContent = '一致するファイルはありません';
+        list.append(empty);
+      }
+    } else empty?.remove();
+    updatePickCount();
+  };
+  search.addEventListener('input', applySearch);
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && search.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      search.value = '';
+      applySearch();
+    }
+  });
+
   const closePick = () => {
     list.hidden = true;
     pickActions.hidden = true;
     pickHead.hidden = true;
+    search.hidden = true;
   };
 
   const allButton = q<HTMLButtonElement>('[data-act="all"]');
@@ -524,6 +566,9 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       list.hidden = false;
       pickActions.hidden = false;
       pickHead.hidden = false;
+      search.hidden = false;
+      search.value = '';
+      q('.select-all-label').textContent = 'すべて選択';
       const selectable = markQueued();
       const already = walked.files.length - selectable;
       // 全体の件数とサイズは「この共有」の欄に出している
@@ -532,7 +577,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   );
 
   selectAll.addEventListener('change', () => {
-    for (const b of boxes()) if (!b.disabled) b.checked = selectAll.checked;
+    for (const b of shownBoxes()) b.checked = selectAll.checked;
     updatePickCount();
   });
 
@@ -545,8 +590,8 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   addSelected.addEventListener('click', () =>
     busy(addSelected, async () => {
       if (!walked) return;
-      const files = boxes()
-        .filter((b) => b.checked && !b.disabled)
+      const files = shownBoxes()
+        .filter((b) => b.checked)
         .map((b) => walked!.files[Number(b.dataset.index)])
         .filter(Boolean);
       if (files.length === 0) throw new Error('ファイルが選ばれていません');

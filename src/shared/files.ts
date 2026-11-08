@@ -65,3 +65,15 @@ export function relDirFor(shareName: string, token: string, folders: string[], c
   const parts = collapse && folders.length > 0 ? folders : [shareName || token, ...folders];
   return parts.map((d, i) => sanitizeName(d, i === 0 ? token : '_')).join('\\');
 }
+
+/**
+ * 「選んで追加」の検索。名前とフォルダを対象に、空白で区切った語がすべて含まれていれば一致
+ * （大文字小文字・全角半角を区別しない）。空の検索はすべて一致
+ */
+export function matchesQuery(file: { name: string; folders: string[] }, query: string): boolean {
+  const norm = (s: string) => s.normalize('NFKC').toLowerCase();
+  const words = norm(query).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const text = norm([...file.folders, file.name].join('/'));
+  return words.every((w) => text.includes(w));
+}
