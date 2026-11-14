@@ -4,7 +4,7 @@ import { findOwnCopy, PREP_STATES, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
-import { addDownload, tellStatus, tellStopped, type Aria2Status } from './motrix';
+import { addDownload, removeResult, tellStatus, tellStopped, type Aria2Status } from './motrix';
 import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
 
@@ -438,6 +438,8 @@ export async function refreshDownloads(): Promise<void> {
   const patches = new Map<string, Partial<QueueItem>>();
   const logs: [Parameters<typeof logEvent>[0], string][] = [];
   let stopped: Aria2Status[] | null = null;
+  // 失敗・取り消しのタスク。記録はキューに残すので、Motrixの一覧からは消す
+  const toRemove: string[] = [];
   for (const item of items) {
     let status: Aria2Status | undefined;
     try {
@@ -468,6 +470,7 @@ export async function refreshDownloads(): Promise<void> {
       patches.set(item.id, { ...progress, state: 'done', gid: undefined });
       logs.push(['info', `完了: ${item.name}`]);
     } else if (status.status === 'error') {
+      toRemove.push(item.gid!);
       const attempts = item.attempts + 1;
       const reason = status.errorMessage ?? status.errorCode ?? '不明';
       patches.set(item.id, {
@@ -479,6 +482,7 @@ export async function refreshDownloads(): Promise<void> {
       });
       logs.push([attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `Motrixでのダウンロード失敗: ${item.name} — ${reason}`]);
     } else if (status.status === 'removed') {
+      toRemove.push(item.gid!);
       patches.set(item.id, { state: 'error', gid: undefined, error: 'Motrixでダウンロードが取り消されました' });
       logs.push(['warn', `Motrixで取り消されました: ${item.name}`]);
     } else {
@@ -497,4 +501,12 @@ export async function refreshDownloads(): Promise<void> {
   await updateItems(patches, (i) => i.state === 'downloading' && i.gid === gidOf.get(i.id));
   for (const [id, patch] of patches) if (patch.state) progressSavedAt.delete(id);
   for (const [level, message] of logs) await logEvent(level, message);
+  for (const gid of toRemove) {
+    try {
+      await removeResult(gid);
+    } catch (e) {
+      // すでに消えているなら問題なし。それ以外も記録だけして続ける
+      if (!/not found/i.test(errorText(e))) await logEvent('warn', `Motrixの一覧から消せませんでした: ${errorText(e)}`);
+    }
+  }
 }

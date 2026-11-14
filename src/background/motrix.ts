@@ -1,4 +1,5 @@
 import { loadSettings } from '../shared/settings';
+import { downloadOptions } from './aria2-options';
 
 let nextId = 1;
 
@@ -49,13 +50,13 @@ export async function addDownload(
   opts: { dir?: string; out?: string; resume?: boolean } = {},
 ): Promise<string> {
   const { downloadDir } = await loadSettings();
-  const options: Record<string, string> = {};
-  const dir = joinDir(downloadDir, opts.dir ?? '');
-  if (dir) options.dir = dir;
-  if (opts.out) options.out = opts.out;
-  // 再試行のときは、途中まで落としたファイル（.aria2 の管理ファイル付き）から続きを取る
-  if (opts.resume) options.continue = 'true';
+  const options = downloadOptions({ dir: joinDir(downloadDir, opts.dir ?? ''), out: opts.out, resume: opts.resume });
   return aria2<string>('addUri', [[url], options]);
+}
+
+/** 終了済み（失敗・取り消し）のタスクをMotrixの一覧から消す */
+export async function removeResult(gid: string): Promise<void> {
+  await aria2('removeDownloadResult', [gid]);
 }
 
 export interface Aria2Status {
