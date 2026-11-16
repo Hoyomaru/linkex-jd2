@@ -1,14 +1,15 @@
-import type { MotrixLive, Request, Response } from '../shared/messages';
+import type { JdLive, Request, Response } from '../shared/messages';
 import { ACTIVE_STATES, FINISHED_STATES, type QueueItem } from '../shared/queue';
 import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, refreshDownloads, start } from './engine';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
-import { addDownload, getGlobalStat, getVersion, tellActive, tellStatus } from './motrix';
-import { clearEvents, clearHashes, mutateQueue, readEngine } from './store';
+import { addDownload, getVersion, queryLinks, totalSpeed } from './jd2';
+import { clearEvents, clearHashes, mutateQueue, readEngine, readQueue } from './store';
 import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
 import { setupNotificationClick } from './notify';
+import { installOriginRule } from './origin-rule';
 
 chrome.runtime.onMessage.addListener((message: Request, sender, sendResponse) => {
   handle(message, sender.tab?.id)
@@ -16,6 +17,9 @@ chrome.runtime.onMessage.addListener((message: Request, sender, sendResponse) =>
     .catch((e: unknown) => sendResponse({ ok: false, error: String((e as Error)?.message ?? e) } satisfies Response));
   return true; // 非同期で応答する
 });
+
+// JD2に断られないよう、JD2へのリクエストから Origin を外す（Service Worker が起きるたびに入れ直す）
+void installOriginRule();
 
 // Service Worker が止められても、1分ごとに起きて続きを再開する
 chrome.alarms.create('tick', { periodInMinutes: 1 });
@@ -32,11 +36,15 @@ watchBadge();
 setupMenuClicks();
 setupNotificationClick(() => openDashboard());
 chrome.runtime.onInstalled.addListener(async () => {
-  // 0.1.0 で「Motrixに見つからない」とエラーにしていた件は、実際には完了していたので直す
+  // Motrix版で渡したダウンロードは、Motrixの中で最後まで続くので、こちらでは完了扱いにする
   await mutateQueue((items) => {
     for (const item of items) {
-      if (item.state === 'error' && item.error?.startsWith('Motrixにこのダウンロードが見つかりません')) {
-        Object.assign(item, { state: 'done', error: undefined, gid: undefined, note: 'Motrixの履歴になし', updatedAt: Date.now() });
+      const old = item as QueueItem & { gid?: string };
+      if (old.gid !== undefined) {
+        if (item.state === 'downloading') {
+          Object.assign(item, { state: 'done', note: 'Motrix版で渡した分（確認なし）', updatedAt: Date.now() });
+        }
+        delete old.gid;
       }
     }
   });
@@ -79,23 +87,24 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
       await chrome.tabs.update(tabId, { active: true });
       return tabId;
     }
-    case 'motrix.version':
+    case 'jd.version':
       return getVersion();
-    case 'motrix.add':
+    case 'jd.add':
       return addDownload(req.url, { dir: req.dir, out: req.out });
-    case 'motrix.status':
-      return tellStatus(req.gid);
-    case 'motrix.active': {
-      const [active, stat] = await Promise.all([tellActive(), getGlobalStat()]);
+    case 'jd.active': {
+      const ids = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId).map((i) => i.jdId!);
+      const [links, speed] = await Promise.all([queryLinks(ids), totalSpeed()]);
       return {
-        downloadSpeed: Number(stat.downloadSpeed) || 0,
-        active: active.map((a) => ({
-          gid: a.gid,
-          totalLength: Number(a.totalLength) || 0,
-          completedLength: Number(a.completedLength) || 0,
-          downloadSpeed: Number(a.downloadSpeed) || 0,
-        })),
-      } satisfies MotrixLive;
+        downloadSpeed: speed || 0,
+        active: links
+          .filter((l) => !l.finished)
+          .map((l) => ({
+            jdId: String(l.uuid),
+            totalLength: l.bytesTotal ?? 0,
+            completedLength: l.bytesLoaded ?? 0,
+            downloadSpeed: l.speed ?? 0,
+          })),
+      } satisfies JdLive;
     }
     case 'cdn.probe':
       return probeCdn(req.url);

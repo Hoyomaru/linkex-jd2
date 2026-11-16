@@ -11,7 +11,7 @@ export interface PickContext {
   parallel: number;
   /** 保存中のコピーの合計がこれを超えないようにする（バイト） */
   budgetBytes: number;
-  /** Motrixの同時ダウンロード数（保存中の件も、すぐダウンロードに回るので数に入れる） */
+  /** JD2に渡しておく数（保存中の件も、すぐJD2に回るので数に入れる） */
   maxDownloads: number;
   /** false なら新しい件は始めず、途中の件の再開だけをする（容量の空き待ちなど） */
   allowNew: boolean;

@@ -117,15 +117,15 @@ action($('linkex-open'), async () => {
   if (!res.ok) throw new Error(res.error);
 });
 
-// ---------- Motrix ----------
-action($('motrix-test'), async () => {
-  const el = $('motrix-status');
+// ---------- JD2 ----------
+action($('jd-test'), async () => {
+  const el = $('jd-status');
   el.textContent = '確認中…';
   el.className = 'muted';
   // 入力中（未保存）の設定ではなく、保存済みの設定で試す
-  const res = await send<{ version: string }>({ type: 'motrix.version' });
+  const res = await send<number>({ type: 'jd.version' });
   if (res.ok) {
-    el.textContent = `接続OK（aria2 ${res.data.version}）`;
+    el.textContent = `接続OK（JD2 ビルド ${res.data}）`;
     el.className = 'ok';
   } else {
     el.textContent = res.error;
@@ -139,8 +139,7 @@ async function loadSettingsIntoForm() {
   const res = await send<Settings>({ type: 'settings.get' });
   if (!res.ok) return log(`設定の読み込みに失敗: ${res.error}`);
   const s = res.data;
-  (form.elements.namedItem('rpcUrl') as HTMLInputElement).value = s.rpcUrl;
-  (form.elements.namedItem('rpcSecret') as HTMLInputElement).value = s.rpcSecret;
+  (form.elements.namedItem('jdUrl') as HTMLInputElement).value = s.jdUrl;
   (form.elements.namedItem('downloadDir') as HTMLInputElement).value = s.downloadDir;
   (form.elements.namedItem('apiIntervalMs') as HTMLInputElement).value = String(s.apiIntervalMs);
   (form.elements.namedItem('maxDownloads') as HTMLInputElement).value = String(s.maxDownloads);
@@ -153,8 +152,7 @@ form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const v = (name: string) => (form.elements.namedItem(name) as HTMLInputElement);
   const patch: Partial<Settings> = {
-    rpcUrl: v('rpcUrl').value.trim(),
-    rpcSecret: v('rpcSecret').value,
+    jdUrl: v('jdUrl').value.trim(),
     downloadDir: v('downloadDir').value.trim(),
     apiIntervalMs: Math.max(0, Number(v('apiIntervalMs').value) || 0),
     maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
@@ -244,7 +242,7 @@ async function loadMine() {
       makeButton('URL取得', async () => {
         await issueUrl(id, f.name);
       }),
-      makeButton('Motrixへ送る', () => sendToMotrix(id, f.name), 'primary'),
+      makeButton('JD2へ送る', () => sendToJd(id, f.name), 'primary'),
       makeButton('ゴミ箱へ', async () => {
         log('ゴミ箱へ移動', await linkexApi.moveToTrash(id));
         await loadMine();
@@ -266,11 +264,11 @@ async function issueUrl(fileId: string, name: string): Promise<string> {
   return url;
 }
 
-async function sendToMotrix(fileId: string, name: string) {
+async function sendToJd(fileId: string, name: string) {
   const url = await issueUrl(fileId, name);
-  const res = await send<string>({ type: 'motrix.add', url, out: name });
+  const res = await send<string>({ type: 'jd.add', url, out: name });
   if (!res.ok) throw new Error(res.error);
-  log(`Motrixに追加しました: ${name}（GID ${res.data}）`);
+  log(`JD2に追加しました: ${name}（ID ${res.data}）`);
 }
 
 function renderUrls() {

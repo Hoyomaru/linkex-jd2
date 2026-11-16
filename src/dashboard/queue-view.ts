@@ -1,5 +1,5 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
-import { send, type MotrixLive } from '../shared/messages';
+import { send, type JdLive } from '../shared/messages';
 import {
   ACTIVE_STATES,
   ENGINE_KEY,
@@ -15,7 +15,7 @@ import {
   type QueueItem,
 } from '../shared/queue';
 import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
-import { engineView, pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
+import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 import { ArmedKeys, secondPress } from '../ui/confirm';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -195,8 +195,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     renderEvents();
   });
 
-  pollMotrix((live, error) => {
-    renderMotrix(live, error);
+  pollJd((live, error) => {
+    renderJd(live, error);
     progress = toProgressMap(live);
     updateLive();
     renderOverview();
@@ -216,17 +216,17 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     }, delay);
   }
 
-  function renderMotrix(live: MotrixLive | null, error?: string) {
-    const dot = $('m-motrix-dot');
+  function renderJd(live: JdLive | null, error?: string) {
+    const dot = $('m-jd-dot');
     if (live) {
       dot.className = 'dot ok';
-      $('m-motrix').textContent = live.active.length ? `接続中・${live.active.length}件実行中` : '接続中';
-      $('m-motrix').title = '';
+      $('m-jd').textContent = live.active.length ? `接続中・${live.active.length}件実行中` : '接続中';
+      $('m-jd').title = '';
       $('m-speed').textContent = formatSpeed(live.downloadSpeed);
     } else {
       dot.className = 'dot ng';
-      $('m-motrix').textContent = '接続できません';
-      $('m-motrix').title = error ?? '';
+      $('m-jd').textContent = '接続できません';
+      $('m-jd').title = error ?? '';
       $('m-speed').textContent = '-';
     }
   }
@@ -245,13 +245,13 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
   function ourSpeed(): number {
     let speed = 0;
-    for (const item of items) if (item.gid) speed += progress.get(item.gid)?.speed ?? 0;
+    for (const item of items) if (item.jdId) speed += progress.get(item.jdId)?.speed ?? 0;
     return speed;
   }
 
   function renderOverview() {
     const completed = new Map<string, number>();
-    for (const [gid, p] of progress) completed.set(gid, p.completed);
+    for (const [jdId, p] of progress) completed.set(jdId, p.completed);
     const s = summarizeQueue(items, completed);
 
     const empty = s.total === 0;
@@ -436,8 +436,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       meter.append(bar);
       const text = el('div', 'live');
       state.append(meter, text);
-      if (item.gid) liveRows.set(item.gid, { bar, text });
-      // Motrixから取れるまでは、保存してある値で出しておく
+      if (item.jdId) liveRows.set(item.jdId, { bar, text });
+      // JD2から取れるまでは、保存してある値で出しておく
       bar.style.width = `${percent(item.completedLength ?? 0, item.totalLength ?? item.size ?? 0)}%`;
     }
 
@@ -449,7 +449,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     }
     if (!ACTIVE_STATES.includes(item.state)) {
       const b = el('button', 'small', '外す');
-      b.title = item.state === 'downloading' ? '一覧から外します（Motrixのダウンロードは続きます）' : '一覧から外します';
+      b.title = item.state === 'downloading' ? '一覧から外します（JD2のダウンロードは続きます）' : '一覧から外します';
       run(b, () => must(send({ type: 'queue.remove', id: item.id })));
       actions.append(b);
     }
@@ -460,8 +460,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
   /** ダウンロード中の行の進み具合・速度・残り時間を書き換える */
   function updateLive() {
-    for (const [gid, row] of liveRows) {
-      const p = progress.get(gid);
+    for (const [jdId, row] of liveRows) {
+      const p = progress.get(jdId);
       if (!p) continue;
       const pct = percent(p.completed, p.total);
       row.bar.style.width = `${pct}%`;

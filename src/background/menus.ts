@@ -20,7 +20,7 @@ export function createMenus(): void {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'add-link',
-      title: 'Linkex Motrix のキューに追加',
+      title: 'Linkex JD2 のキューに追加',
       contexts: ['link'],
       targetUrlPatterns: LINK_PATTERNS,
     });

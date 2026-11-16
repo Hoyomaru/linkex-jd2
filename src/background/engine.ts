@@ -4,7 +4,8 @@ import { findOwnCopy, PREP_STATES, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
-import { addDownload, removeResult, tellStatus, tellStopped, type Aria2Status } from './motrix';
+import { jdLinkState } from '../shared/jd2-status';
+import { addDownload, discardLinks, queryLinks } from './jd2';
 import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
 
@@ -12,7 +13,7 @@ const MAX_ATTEMPTS = 3;
 const COPY_TIMEOUT_MS = 5 * 60_000;
 /** 保存が終わってから、コピーが一覧に出てくるのを待つ時間 */
 const COPY_FIND_MS = 60_000;
-/** ダウンロードの空き待ち。Motrixへの確認はPCの中で済み軽いので、短めに見る */
+/** ダウンロードの空き待ち。JD2への確認はPCの中で済み軽いので、短めに見る */
 const IDLE_WAIT_MS = 1_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const CAPACITY_WAIT_MS = 30_000;
@@ -71,7 +72,7 @@ export async function pause(): Promise<void> {
 
 /**
  * 全体の指示役。空きがあれば次の件に担当を付けて保存〜削除を並行して進め、
- * Motrixの完了を取り込み、全部終わったら知らせる。
+ * JD2の完了を取り込み、全部終わったら知らせる。
  */
 async function runLoop(): Promise<void> {
   while (true) {
@@ -169,7 +170,7 @@ async function storageBudget(): Promise<number> {
 }
 
 /**
- * 1件の担当。保存 → コピー探し → URL発行・Motrixへ → 完全削除 まで進める。
+ * 1件の担当。保存 → コピー探し → URL発行・JD2へ → 完全削除 まで進める。
  * 一時停止されたら区切りのよいところで止まる。失敗して待ちに戻ったら、割り当て直しを待つ
  */
 async function runWorker(id: string): Promise<void> {
@@ -230,8 +231,8 @@ async function processItem(item: QueueItem): Promise<void> {
       budget = null;
       return;
     }
-    if (e instanceof LinkexLoginError || /Motrixに接続できません|Motrixのエラー: .*unauthorized/i.test(errorText(e))) {
-      // ログイン切れやMotrix側の問題は件ごとの失敗に数えず、全体を止めて知らせる
+    if (e instanceof LinkexLoginError || /JD2に接続できません|AUTH_FAILED/.test(errorText(e))) {
+      // ログイン切れやJD2側の問題は件ごとの失敗に数えず、全体を止めて知らせる
       await stopWithNotice(errorText(e));
       return;
     }
@@ -299,7 +300,8 @@ async function stepCopy(item: QueueItem): Promise<void> {
     copyStartedAt: Date.now(),
     copiedAt: undefined,
     destFileId: undefined,
-    gid: undefined,
+    jdId: undefined,
+    fileSize: undefined,
     note: undefined,
     error: undefined,
   });
@@ -375,6 +377,8 @@ async function stepSend(item: QueueItem): Promise<void> {
   const file = data?.file ?? data;
   const url = String(file?.url ?? '');
   const hash = contentHash(file) ?? item.hash;
+  // 共有一覧のサイズは実際とずれることがあるので、完了の確かめには自分のコピーのサイズを使う
+  const fileSize = Number(file?.size);
 
   if (!item.force && hash && (await readHashes())[hash]) {
     await updateItem(item.id, { state: 'deleting', hash, note: '同じ中身をダウンロード済み' });
@@ -382,13 +386,19 @@ async function stepSend(item: QueueItem): Promise<void> {
   }
   if (!url) throw new Error('ダウンロードURLを取得できませんでした');
 
-  // 再試行のときは、途中まで落としたファイルがあれば続きから取る
-  const gid = await addDownload(url, { dir: item.relDir, out: item.outName, resume: item.attempts > 0 });
-  await updateItem(item.id, { state: 'deleting', hash, gid, note: undefined });
-  await logEvent('info', `Motrixへ渡しました: ${item.relDir}\\${item.outName}`);
+  // 再試行のときも同じ保存先・同じ名前で渡すので、JD2が途中まで落としたファイルの続きから取る
+  const jdId = await addDownload(url, { dir: item.relDir, out: item.outName });
+  await updateItem(item.id, {
+    state: 'deleting',
+    hash,
+    jdId,
+    fileSize: Number.isFinite(fileSize) && fileSize > 0 ? fileSize : undefined,
+    note: undefined,
+  });
+  await logEvent('info', `JD2へ渡しました: ${item.relDir}\\${item.outName}`);
 }
 
-/** Motrixに渡した直後に、自分のストレージのコピーを完全削除して容量を空ける */
+/** JD2に渡した直後に、自分のストレージのコピーを完全削除して容量を空ける */
 async function stepDelete(item: QueueItem): Promise<void> {
   const destId = item.destFileId;
   if (!destId) throw new Error('削除するコピーのIDがありません');
@@ -411,7 +421,7 @@ async function stepDelete(item: QueueItem): Promise<void> {
   await api.deleteForever(destId);
 
   const after: Partial<QueueItem> = { destFileId: undefined, beforeIds: undefined };
-  if (item.gid) {
+  if (item.jdId) {
     await updateItem(item.id, { ...after, state: 'downloading', note: undefined });
   } else if (item.note === '同じ中身をダウンロード済み') {
     await updateItem(item.id, { ...after, state: 'skipped' });
@@ -425,66 +435,61 @@ async function stepDelete(item: QueueItem): Promise<void> {
   }
 }
 
-/** 進み具合だけの変化は、この間隔より短くは保存しない（画面はMotrixから直接取っている） */
+/** 進み具合だけの変化は、この間隔より短くは保存しない（画面はJD2から直接取っている） */
 const PROGRESS_SAVE_MS = 30_000;
 const progressSavedAt = new Map<string, number>();
 
 /**
- * Motrixのダウンロード状況を取り込み、完了・失敗を反映する。
+ * JD2のダウンロード状況を取り込み、完了・失敗を反映する。
  * キュー全体の書き込みは重く、書くたびに画面も描き直されるので、変更はまとめて1回で書く
  */
 export async function refreshDownloads(): Promise<void> {
-  const items = (await readQueue()).filter((i) => i.state === 'downloading' && i.gid);
+  const items = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId);
+  if (items.length === 0) return;
+  let links: Awaited<ReturnType<typeof queryLinks>>;
+  try {
+    links = await queryLinks(items.map((i) => i.jdId!));
+  } catch {
+    return; // JD2に一時的につながらない場合は次回また確認
+  }
+  const byId = new Map(links.map((l) => [String(l.uuid), l]));
   const patches = new Map<string, Partial<QueueItem>>();
   const logs: [Parameters<typeof logEvent>[0], string][] = [];
-  let stopped: Aria2Status[] | null = null;
-  // 失敗・取り消しのタスク。記録はキューに残すので、Motrixの一覧からは消す
-  const toRemove: string[] = [];
+  // JD2があきらめたリンク。保存し直して新しいURLで渡すので、落としかけのファイルごとJD2の一覧から消す
+  const toDiscard: string[] = [];
   for (const item of items) {
-    let status: Aria2Status | undefined;
-    try {
-      status = await tellStatus(item.gid!);
-    } catch (e) {
-      if (!/not found/i.test(errorText(e))) continue; // Motrixに一時的につながらない場合は次回また確認
-      // 完了したダウンロードをMotrixが履歴から消していることがある。停止済み一覧も探す
-      try {
-        stopped ??= await tellStopped();
-      } catch {
-        continue;
-      }
-      status = stopped.find((s) => s.gid === item.gid);
-      if (!status) {
-        // 履歴に残っていない。Motrixに渡せた時点で成功とみなす（完了確認オフの要件）
-        if (item.hash) await rememberHash(item.hash, item.name);
-        patches.set(item.id, { state: 'done', gid: undefined, note: 'Motrixの履歴になし' });
-        logs.push(['info', `完了（Motrixの履歴になし）: ${item.name}`]);
-        continue;
-      }
-    }
-    const progress = {
-      totalLength: Number(status.totalLength) || undefined,
-      completedLength: Number(status.completedLength) || 0,
-    };
-    if (status.status === 'complete') {
+    const link = byId.get(item.jdId!);
+    const state = jdLinkState(link, item.fileSize ?? null);
+    const progress: Partial<QueueItem> = link
+      ? {
+          totalLength: link.bytesTotal && link.bytesTotal > 0 ? link.bytesTotal : undefined,
+          completedLength: link.bytesLoaded ?? 0,
+        }
+      : {};
+    if (state === 'missing') {
+      // 一覧から消えている（JD2の設定で完了後に自動で片付けられた・手で消された）。渡せた時点で成功とみなす
       if (item.hash) await rememberHash(item.hash, item.name);
-      patches.set(item.id, { ...progress, state: 'done', gid: undefined });
+      patches.set(item.id, { state: 'done', jdId: undefined, note: 'JD2の一覧になし' });
+      logs.push(['info', `完了（JD2の一覧になし）: ${item.name}`]);
+    } else if (state === 'done') {
+      if (item.hash) await rememberHash(item.hash, item.name);
+      patches.set(item.id, { ...progress, state: 'done', jdId: undefined });
       logs.push(['info', `完了: ${item.name}`]);
-    } else if (status.status === 'error') {
-      toRemove.push(item.gid!);
+    } else if (state === 'failed' || state === 'truncated') {
+      toDiscard.push(item.jdId!);
       const attempts = item.attempts + 1;
-      const reason = status.errorMessage ?? status.errorCode ?? '不明';
+      const reason =
+        state === 'truncated'
+          ? `途中で切れました（${formatBytes(Math.max(link?.bytesLoaded ?? 0, link?.bytesTotal ?? 0))} / ${formatBytes(item.fileSize ?? null)}）`
+          : link?.status || '不明';
       patches.set(item.id, {
         ...progress,
         attempts,
-        gid: undefined,
+        jdId: undefined,
         state: attempts >= MAX_ATTEMPTS ? 'error' : 'retry',
-        error: `Motrixでのダウンロード失敗: ${reason}`,
+        error: `JD2でのダウンロード失敗: ${reason}`,
       });
-      logs.push([attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `Motrixでのダウンロード失敗: ${item.name} — ${reason}`]);
-    } else if (status.status === 'removed') {
-      toRemove.push(item.gid!);
-      patches.set(item.id, { state: 'error', gid: undefined, error: 'Motrixでダウンロードが取り消されました' });
-      logs.push(['warn', `Motrixで取り消されました: ${item.name}`]);
+      logs.push([attempts >= MAX_ATTEMPTS ? 'error' : 'warn', `JD2でのダウンロード失敗: ${item.name} — ${reason}`]);
     } else {
       // 進み具合だけなら、変わっていて、前に保存してから時間がたったときだけ書く
       const changed =
@@ -497,16 +502,13 @@ export async function refreshDownloads(): Promise<void> {
     }
   }
   // 確認しているあいだに外されたり状態が変わったりした件は書き換えない
-  const gidOf = new Map(items.map((i) => [i.id, i.gid]));
-  await updateItems(patches, (i) => i.state === 'downloading' && i.gid === gidOf.get(i.id));
+  const jdIdOf = new Map(items.map((i) => [i.id, i.jdId]));
+  await updateItems(patches, (i) => i.state === 'downloading' && i.jdId === jdIdOf.get(i.id));
   for (const [id, patch] of patches) if (patch.state) progressSavedAt.delete(id);
   for (const [level, message] of logs) await logEvent(level, message);
-  for (const gid of toRemove) {
-    try {
-      await removeResult(gid);
-    } catch (e) {
-      // すでに消えているなら問題なし。それ以外も記録だけして続ける
-      if (!/not found/i.test(errorText(e))) await logEvent('warn', `Motrixの一覧から消せませんでした: ${errorText(e)}`);
-    }
+  try {
+    await discardLinks(toDiscard);
+  } catch (e) {
+    await logEvent('warn', `JD2の一覧から外せませんでした: ${errorText(e)}`);
   }
 }

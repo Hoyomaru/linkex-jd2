@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Linkex Motrix",
-  "version": "1.5.0",
-  "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すダウンローダー",
+  "name": "Linkex JD2",
+  "version": "2.0.0",
+  "description": "Linkexの共有ファイルを自分のストレージ経由でJDownloader 2に渡すダウンローダー",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -14,7 +14,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Linkex Motrix",
+    "default_title": "Linkex JD2",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -42,7 +42,8 @@
     "alarms",
     "notifications",
     "contextMenus",
-    "activeTab"
+    "activeTab",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://www.linkex.io/*",

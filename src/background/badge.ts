@@ -27,7 +27,7 @@ export async function updateBadge(): Promise<void> {
   const parts = [`残り ${remaining}件`];
   if (s.counts.error) parts.push(`失敗 ${s.counts.error}件`);
   parts.push(engine?.paused === false ? '実行中' : '停止中');
-  await chrome.action.setTitle({ title: `Linkex Motrix — ${parts.join('・')}` });
+  await chrome.action.setTitle({ title: `Linkex JD2 — ${parts.join('・')}` });
 }
 
 let timer: ReturnType<typeof setTimeout> | undefined;

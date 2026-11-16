@@ -50,7 +50,10 @@ export interface QueueItem {
   copiedAt?: number;
   /** 自分のストレージに作られたコピーのID */
   destFileId?: string;
-  gid?: string;
+  /** JD2のダウンロード一覧でのリンクのID */
+  jdId?: string;
+  /** 自分のコピーのサイズ（Linkexの file/get）。JD2が途中で切れた分を完了にしていないか確かめる */
+  fileSize?: number;
   totalLength?: number;
   completedLength?: number;
   note?: string;
@@ -116,7 +119,7 @@ export interface QueueSummary {
   bytesRemaining: number;
 }
 
-/** キューを数え上げる。live にはMotrixから取った今の進み具合（gid → 取得済みバイト）を渡せる */
+/** キューを数え上げる。live にはJD2から取った今の進み具合（jdId → 取得済みバイト）を渡せる */
 export function summarizeQueue(items: QueueItem[], live?: Map<string, number>): QueueSummary {
   const counts: Record<QueueGroup, number> = { active: 0, waiting: 0, done: 0, skipped: 0, error: 0 };
   let bytesTotal = 0;
@@ -131,7 +134,7 @@ export function summarizeQueue(items: QueueItem[], live?: Map<string, number>): 
     let done = 0;
     if (item.state === 'done') done = size;
     else if (item.state === 'downloading') {
-      done = (item.gid ? live?.get(item.gid) : undefined) ?? item.completedLength ?? 0;
+      done = (item.jdId ? live?.get(item.jdId) : undefined) ?? item.completedLength ?? 0;
     }
     bytesDone += done;
     if (group === 'active' || group === 'waiting') bytesRemaining += Math.max(0, size - done);

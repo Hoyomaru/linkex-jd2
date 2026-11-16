@@ -4,7 +4,7 @@
  * このファイルは単体のスクリプトとしてビルドする（vite.content.config.ts）。
  */
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
-import type { MotrixLive, Response } from '../shared/messages';
+import type { JdLive, Response } from '../shared/messages';
 import {
   ENGINE_KEY,
   GROUP_OF,
@@ -174,7 +174,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     <div class="panel">
       <div class="head">
         <span class="logo">${LOGO}</span>
-        <span class="title">Linkex Motrix</span>
+        <span class="title">Linkex JD2</span>
         <span class="mini" hidden><span class="ring"></span><span class="mini-text"></span></span>
         <span class="pill engine-pill">停止中</span>
         <button class="icon" data-act="collapse" title="小さくする" aria-label="小さくする"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9" /></svg></button>
@@ -270,7 +270,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     body.hidden = collapsed;
     mini.hidden = !collapsed || !q('.mini-text').textContent;
     collapseButton.innerHTML = collapsed ? ICON_PLUS : ICON_MINUS;
-    collapseButton.title = collapsed ? 'Linkex Motrix を開く' : '小さくする';
+    collapseButton.title = collapsed ? 'Linkex JD2 を開く' : '小さくする';
     collapseButton.setAttribute('aria-label', collapseButton.title);
   };
   collapseButton.addEventListener('click', () => {
@@ -310,7 +310,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
 
   // ---------- このリンクの進み具合 ----------
   let mine: QueueItem[] = [];
-  /** Motrixから取った今の進み具合（gid → 取得済みバイト・速度） */
+  /** JD2から取った今の進み具合（jdId → 取得済みバイト・速度） */
   let live = new Map<string, { completed: number; speed: number }>();
 
   const chip = (cls: string, label: string, n: number) => {
@@ -331,7 +331,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       mini.hidden = true;
       return;
     }
-    const completed = new Map([...live].map(([gid, p]) => [gid, p.completed]));
+    const completed = new Map([...live].map(([jdId, p]) => [jdId, p.completed]));
     const s = summarizeQueue(mine, completed);
     const target = mine.length - s.counts.skipped;
     const pct = percent(s.bytesDone, s.bytesTotal);
@@ -341,7 +341,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     q('.p-bar').style.width = `${pct}%`;
 
     let speed = 0;
-    for (const item of mine) if (item.gid) speed += live.get(item.gid)?.speed ?? 0;
+    for (const item of mine) if (item.jdId) speed += live.get(item.jdId)?.speed ?? 0;
     const busyNow = s.counts.active + s.counts.waiting > 0;
     q('.tiles').hidden = !busyNow;
     q('.t-speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
@@ -370,7 +370,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     renderProgress();
   };
 
-  // ダウンロード中のファイルがあり、ページが見えているときだけ、Motrixに速度を聞きに行く
+  // ダウンロード中のファイルがあり、ページが見えているときだけ、JD2に速度を聞きに行く
   const speedTimer = setInterval(async () => {
     if (document.visibilityState !== 'visible' || !mine.some((i) => i.state === 'downloading')) {
       if (live.size) {
@@ -379,9 +379,9 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       }
       return;
     }
-    const res = await send<MotrixLive>({ type: 'motrix.active' });
+    const res = await send<JdLive>({ type: 'jd.active' });
     live = new Map(
-      res.ok ? res.data.active.map((a) => [a.gid, { completed: a.completedLength, speed: a.downloadSpeed }]) : [],
+      res.ok ? res.data.active.map((a) => [a.jdId, { completed: a.completedLength, speed: a.downloadSpeed }]) : [],
     );
     renderProgress();
   }, 1500);

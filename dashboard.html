@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Linkex Motrix</title>
+    <title>Linkex JD2</title>
     <link rel="icon" href="/icons/icon-32.png" />
     <link rel="stylesheet" href="/src/ui/style.css" />
     <link rel="stylesheet" href="/src/dashboard/dashboard.css" />
@@ -12,7 +12,7 @@
     <header class="topbar">
       <div class="topbar-inner">
         <div class="status-line">
-          <h1 class="brand"><img src="/icons/icon.svg" alt="" width="22" height="22" />Linkex Motrix</h1>
+          <h1 class="brand"><img src="/icons/icon.svg" alt="" width="22" height="22" />Linkex JD2</h1>
           <span id="engine-pill" class="pill">停止中</span>
           <span id="engine-message" class="muted engine-message"></span>
           <button id="engine-toggle" class="primary toggle">開始</button>
@@ -23,8 +23,8 @@
             <span class="value" id="m-speed">-</span>
           </div>
           <div class="metric">
-            <span class="label">Motrix</span>
-            <span class="value"><span id="m-motrix-dot" class="dot"></span><span id="m-motrix">確認中</span></span>
+            <span class="label">JD2</span>
+            <span class="value"><span id="m-jd-dot" class="dot"></span><span id="m-jd">確認中</span></span>
           </div>
           <div class="metric wide" title="Linkexの自分のストレージ">
             <span class="label">容量</span>
@@ -114,21 +114,21 @@
       <div data-page="settings" class="page" hidden>
         <form id="settings" class="settings-form">
           <section class="panel">
-            <h2>Motrix</h2>
+            <h2>JDownloader 2</h2>
             <div class="fields">
-              <label>接続先<input type="text" name="rpcUrl" /></label>
-              <label>RPCシークレット<input type="password" name="rpcSecret" autocomplete="off" /></label>
+              <label class="full">接続先（ローカルAPI）<input type="text" name="jdUrl" /></label>
             </div>
             <div class="row" style="margin-top: 10px">
-              <button type="button" id="motrix-test">接続テスト</button>
-              <span id="motrix-status" class="muted"></span>
+              <button type="button" id="jd-test">接続テスト</button>
+              <span id="jd-status" class="muted"></span>
             </div>
+            <p class="hint">JD2の「設定 → 詳細設定」で「RemoteAPI: Deprecated Api Enabled」をオンにして、JD2を再起動しておきます。保存先にもう同じ名前のファイルがあると、JD2が上書きするか聞いてきて止まるので、JD2の「ファイルが既に存在する場合」の設定も確かめておいてください。</p>
           </section>
 
           <section class="panel">
             <h2>保存先</h2>
             <div class="fields">
-              <label class="full">基準フォルダ（空ならMotrixの既定のフォルダ）<input type="text" name="downloadDir" placeholder="例: D:\Downloads\Linkex" /></label>
+              <label class="full">基準フォルダ（空ならJD2の既定のフォルダ）<input type="text" name="downloadDir" placeholder="例: D:\Downloads\Linkex" /></label>
             </div>
             <p class="hint">この下に「共有名\共有内のフォルダ\ファイル」の形で保存されます。共有の中身がフォルダ1つだけなら、共有名の段を飛ばして「そのフォルダ\…」から保存します（キューに追加した後の件は変わりません）。</p>
           </section>
@@ -136,7 +136,7 @@
           <section class="panel">
             <h2>動作</h2>
             <div class="fields">
-              <label>同時ダウンロード数<input type="number" name="maxDownloads" min="1" max="16" /></label>
+              <label>JD2に渡しておく数<input type="number" name="maxDownloads" min="1" max="16" title="URLには期限があるので、JD2の中で長く待たせないよう、渡すのはこの数まで。実際に同時に落とす数はJD2の設定に従う" /></label>
               <label>同時に処理する数（Linkex側の保存〜削除）<input type="number" name="parallelItems" min="1" max="6" /></label>
               <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
               <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き。オフにすると1件ごとの転送量の確認を省くので、少し速くなる）</label>
@@ -172,7 +172,7 @@
 
       <!-- ========== 確認用 ========== -->
       <div data-page="tools" class="page" hidden>
-        <p class="note">Linkex・Motrixの動きを1つずつ試すための画面です。ふだんは使いません。</p>
+        <p class="note">Linkex・JD2の動きを1つずつ試すための画面です。ふだんは使いません。</p>
 
         <section class="panel">
           <h2>1. 共有リンクの中身</h2>

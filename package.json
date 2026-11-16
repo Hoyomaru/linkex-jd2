@@ -1,13 +1,13 @@
 {
-  "name": "linkex-motrix",
-  "version": "1.5.0",
+  "name": "linkex-jd2",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Linkexの共有ファイルを自分のストレージ経由でMotrixに渡すEdge拡張機能",
+  "description": "Linkexの共有ファイルを自分のストレージ経由でJDownloader 2に渡すEdge拡張機能",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hoyomaru/linkex-motrix.git"
+    "url": "https://github.com/Hoyomaru/linkex-jd2.git"
   },
   "scripts": {
     "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts",

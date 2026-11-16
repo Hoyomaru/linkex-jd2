@@ -4,7 +4,7 @@ import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
 import { ENGINE_KEY, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
-import { engineView, pollMotrix, toProgressMap, type LiveProgress } from '../ui/live';
+import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -208,7 +208,7 @@ function render() {
   $('toggle').className = view.paused ? 'primary' : '';
 
   const completed = new Map<string, number>();
-  for (const [gid, p] of progress) completed.set(gid, p.completed);
+  for (const [jdId, p] of progress) completed.set(jdId, p.completed);
   const s = summarizeQueue(items, completed);
   const empty = s.total === 0;
   const pct = percent(s.bytesDone, s.bytesTotal);
@@ -228,7 +228,7 @@ function render() {
   $('bar-wrap').setAttribute('aria-valuenow', String(Math.floor(pct)));
 
   let speed = 0;
-  for (const item of items) if (item.gid) speed += progress.get(item.gid)?.speed ?? 0;
+  for (const item of items) if (item.jdId) speed += progress.get(item.jdId)?.speed ?? 0;
   $('speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
   $('left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
   $('eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
@@ -279,7 +279,7 @@ function render() {
       const live = document.createElement('div');
       live.className = 'live';
       li.append(name);
-      const p = item.gid ? progress.get(item.gid) : undefined;
+      const p = item.jdId ? progress.get(item.jdId) : undefined;
       if (item.state === 'downloading') {
         const meter = document.createElement('div');
         meter.className = 'meter info';
@@ -317,11 +317,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 void load();
 
-pollMotrix((live, error) => {
+pollJd((live, error) => {
   progress = toProgressMap(live);
-  $('motrix-dot').className = `dot ${live ? 'ok' : 'ng'}`;
-  $('motrix-text').textContent = live ? 'Motrix 接続中' : 'Motrix に接続できません';
-  $('motrix').title = error ?? '';
+  $('jd-dot').className = `dot ${live ? 'ok' : 'ng'}`;
+  $('jd-text').textContent = live ? 'JD2 接続中' : 'JD2 に接続できません';
+  $('jd').title = error ?? '';
   render();
 });
 

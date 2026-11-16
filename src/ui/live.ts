@@ -1,4 +1,4 @@
-import { send, type MotrixLive } from '../shared/messages';
+import { send, type JdLive } from '../shared/messages';
 
 export interface LiveProgress {
   completed: number;
@@ -7,11 +7,11 @@ export interface LiveProgress {
 }
 
 /**
- * Motrixの今のダウンロード状況を定期的に取りに行く。
+ * JD2の今のダウンロード状況を定期的に取りに行く。
  * 画面が見えているときだけ動く。戻り値を呼ぶと止まる。
  */
-export function pollMotrix(
-  onData: (live: MotrixLive | null, error?: string) => void,
+export function pollJd(
+  onData: (live: JdLive | null, error?: string) => void,
   intervalMs = 1500,
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -20,7 +20,7 @@ export function pollMotrix(
   const tick = async () => {
     if (stopped) return;
     if (document.visibilityState === 'visible') {
-      const res = await send<MotrixLive>({ type: 'motrix.active' });
+      const res = await send<JdLive>({ type: 'jd.active' });
       if (stopped) return;
       if (res.ok) onData(res.data);
       else onData(null, res.error);
@@ -42,18 +42,18 @@ export function pollMotrix(
   };
 }
 
-/** gid ごとの進み具合にまとめる */
-export function toProgressMap(live: MotrixLive | null): Map<string, LiveProgress> {
+/** jdId ごとの進み具合にまとめる */
+export function toProgressMap(live: JdLive | null): Map<string, LiveProgress> {
   const map = new Map<string, LiveProgress>();
   for (const a of live?.active ?? []) {
-    map.set(a.gid, { completed: a.completedLength, total: a.totalLength, speed: a.downloadSpeed });
+    map.set(a.jdId, { completed: a.completedLength, total: a.totalLength, speed: a.downloadSpeed });
   }
   return map;
 }
 
 /**
  * 処理全体の状態を、画面に出す1つの言い方にまとめる（ポップアップ・専用ページ・共有ページで同じ）。
- * 一時停止しても Motrix に渡したダウンロードは最後まで続くので、そのことを文で添える。
+ * 一時停止しても JD2 に渡したダウンロードは最後まで続くので、そのことを文で添える。
  */
 export function engineView(
   engine: { paused: boolean; message: string } | undefined,
@@ -65,7 +65,7 @@ export function engineView(
   const unfinished = items.some((i) => !['done', 'skipped', 'error'].includes(i.state));
   if (paused) {
     if (downloading) {
-      return { paused, pill: '一時停止中', tone: '', message: `一時停止中（Motrix に渡した ${downloading}件は最後まで続きます）` };
+      return { paused, pill: '一時停止中', tone: '', message: `一時停止中（JD2 に渡した ${downloading}件は最後まで続きます）` };
     }
     // 「すべて終わりました」などの結果はそのまま見せる
     return { paused, pill: unfinished ? '一時停止中' : '停止中', tone: '', message: message === '一時停止中' ? '' : message };

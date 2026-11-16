@@ -4,10 +4,9 @@ import type { Settings } from './settings';
 export type Request =
   | { type: 'linkex.call'; method: 'get' | 'post'; path: string; params?: unknown; data?: unknown }
   | { type: 'linkex.openTab' }
-  | { type: 'motrix.version' }
-  | { type: 'motrix.add'; url: string; dir?: string; out?: string }
-  | { type: 'motrix.status'; gid: string }
-  | { type: 'motrix.active' }
+  | { type: 'jd.version' }
+  | { type: 'jd.add'; url: string; dir?: string; out?: string }
+  | { type: 'jd.active' }
   | { type: 'cdn.probe'; url: string }
   | { type: 'queue.add'; text: string }
   | { type: 'share.walk'; token: string }
@@ -50,9 +49,10 @@ export interface LinkexEnvelope<T> {
   data: T;
 }
 
-/** motrix.active の応答。画面で速度と進み具合を出すのに使う */
-export interface MotrixLive {
-  /** Motrix全体のダウンロード速度（バイト/秒） */
+/** jd.active の応答。画面で速度と進み具合を出すのに使う */
+export interface JdLive {
+  /** JD2全体のダウンロード速度（バイト/秒） */
   downloadSpeed: number;
-  active: { gid: string; totalLength: number; completedLength: number; downloadSpeed: number }[];
+  /** ダウンロード一覧のうち、この拡張機能が渡して終わっていないリンク */
+  active: { jdId: string; totalLength: number; completedLength: number; downloadSpeed: number }[];
 }
