@@ -11,7 +11,7 @@ export default defineConfig({
     lib: {
       entry: 'src/content/share-page.ts',
       formats: ['iife'],
-      name: 'LinkexMotrixContent',
+      name: 'LinkexJd2Content',
       fileName: () => 'content.js',
     },
   },

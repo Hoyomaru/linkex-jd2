@@ -266,7 +266,7 @@ async function relayProgress(tabId: number, token: string, state: { finished: bo
       target: { tabId },
       world: 'MAIN',
       func: (t: string) => {
-        const p = (window as any).__linkexMotrixWalkProgress?.[t];
+        const p = (window as any).__linkexJd2WalkProgress?.[t];
         return p && !p.done ? { files: p.files, bytes: p.bytes, folders: p.folders } : null;
       },
       args: [token],

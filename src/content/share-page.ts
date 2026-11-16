@@ -167,7 +167,7 @@ button[data-icon="pause"]::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 1
 
 function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const host = document.createElement('div');
-  host.id = 'linkex-motrix-panel';
+  host.id = 'linkex-jd2-panel';
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `
     <style>${STYLE}</style>

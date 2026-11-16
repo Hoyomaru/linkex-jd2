@@ -40,8 +40,8 @@ export async function linkexBridgeWalkShare(token: string, concurrency: number):
   try {
     // ドライブのページでも共有ページでも動く。共有の中身はログインなしで読めるので、
     // 共有ページ（/landing/assets/js/index-*.js）の通信用の部品でもよい
-    const w = window as unknown as { __linkexMotrixWalkClient?: any };
-    if (!w.__linkexMotrixWalkClient) {
+    const w = window as unknown as { __linkexJd2WalkClient?: any };
+    if (!w.__linkexJd2WalkClient) {
       const sources = [
         ...Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')).map((s) => s.src),
         ...performance.getEntriesByType('resource').map((e) => e.name),
@@ -56,14 +56,14 @@ export async function linkexBridgeWalkShare(token: string, concurrency: number):
         v.instance && typeof v.instance.request === 'function',
       );
       if (!client) return { ok: false, error: 'client_not_found' };
-      w.__linkexMotrixWalkClient = client;
+      w.__linkexJd2WalkClient = client;
     }
-    const client = w.__linkexMotrixWalkClient;
+    const client = w.__linkexJd2WalkClient;
     const config = { skipGlobalMessage: true };
     let requests = 0;
 
     // 途中経過。Service Worker が少しずつ読みに来て、画面に件数を出す
-    const progressStore = ((window as any).__linkexMotrixWalkProgress ??= {}) as Record<string, any>;
+    const progressStore = ((window as any).__linkexJd2WalkProgress ??= {}) as Record<string, any>;
     const progress = { files: 0, bytes: 0, folders: 0, requests: 0, done: false };
     progressStore[token] = progress;
 
@@ -214,14 +214,14 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
   };
 
   try {
-    const w = window as unknown as { __linkexMotrixClient?: any; __linkexMotrixKeepAlive?: boolean };
+    const w = window as unknown as { __linkexJd2Client?: any; __linkexJd2KeepAlive?: boolean };
     // Edge（Chromium）は裏に回ったタブを凍結するが、Web Lock を持っているページは凍結しない。
     // 鍵を取ったまま返さないことで、処理用のタブが凍結されないようにする（読み込み直すと外れるので、そのたびに取り直す）
-    if (!w.__linkexMotrixKeepAlive && navigator.locks) {
-      w.__linkexMotrixKeepAlive = true;
-      void navigator.locks.request('linkex-motrix-keep-alive', () => new Promise<void>(() => undefined));
+    if (!w.__linkexJd2KeepAlive && navigator.locks) {
+      w.__linkexJd2KeepAlive = true;
+      void navigator.locks.request('linkex-jd2-keep-alive', () => new Promise<void>(() => undefined));
     }
-    if (!w.__linkexMotrixClient) {
+    if (!w.__linkexJd2Client) {
       const pattern = /\/drive\/assets\/js\/index-[^/]+\.js(\?.*)?$/;
       const fromScripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]'))
         .map((s) => s.src)
@@ -241,12 +241,12 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
         v.instance && typeof v.instance.request === 'function',
       );
       if (!client) return { ok: false, error: 'client_not_found' };
-      w.__linkexMotrixClient = client;
+      w.__linkexJd2Client = client;
       // 応答がないときに「通信が返ってきたか」を調べられるよう、通信の記録を多めに残す（初期値は250件）
       performance.setResourceTimingBufferSize(5000);
     }
 
-    const client = w.__linkexMotrixClient;
+    const client = w.__linkexJd2Client;
     // 画面にエラー表示を出さないよう skipGlobalMessage を付ける
     const config = { skipGlobalMessage: true };
     const res = req.method === 'get'
