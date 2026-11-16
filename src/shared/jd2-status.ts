@@ -32,3 +32,12 @@ export function jdLinkState(link: JdLinkLike | undefined, expectedSize: number |
   if (link.statusIconKey === 'false') return 'failed';
   return 'active';
 }
+
+/**
+ * JD2へ渡すURLに directhttp:// を付ける。Linkex の CDN は動画でも Content-Type を application/xml で返すことがあり、
+ * そのままだと JD2 はページとみなして中身を読みに行き（16MBを超えると失敗、それ以下でもリンクが出てこない）、
+ * 何も追加されない。directhttp:// を付けると、中身を読まずにファイルとして扱う。
+ */
+export function directHttpLink(url: string): string {
+  return /^directhttp:\/\//i.test(url) ? url : `directhttp://${url}`;
+}

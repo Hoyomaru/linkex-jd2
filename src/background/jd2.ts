@@ -1,3 +1,4 @@
+import { directHttpLink } from '../shared/jd2-status';
 import { loadSettings } from '../shared/settings';
 
 /**
@@ -58,7 +59,8 @@ export async function addDownload(url: string, opts: { dir?: string; out?: strin
   const { downloadDir } = await loadSettings();
   const folder = joinDir(downloadDir || (await defaultFolder()), opts.dir ?? '');
   const job = await jd<{ id: number }>('linkgrabberv2/addLinks', {
-    links: url,
+    // CDN が application/xml で返すファイルをページとして読みに行かないよう、直接のダウンロードとして渡す
+    links: directHttpLink(url),
     destinationFolder: folder,
     // リンクグラバーでは同じ名前のパッケージにまとめられてしまうので、保存先ごとに違う名前にする
     packageName: opts.dir || 'Linkex',

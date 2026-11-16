@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { jdLinkState } from '../src/shared/jd2-status.ts';
+import { directHttpLink, jdLinkState } from '../src/shared/jd2-status.ts';
 
 // 値は JD2 v2 build 48637 の downloadsV2/queryLinks で実際に返ってきたもの
 
@@ -34,4 +34,13 @@ test('無効にされた・スキップされたリンクは failed', () => {
 test('ダウンロード中・開始中は active', () => {
   assert.equal(jdLinkState({ running: true, statusIconKey: 'kc.d2cc9c', enabled: true } as never, 100), 'active');
   assert.equal(jdLinkState({ statusIconKey: 'run', enabled: true }, 100), 'active');
+});
+
+// CDN が動画を application/xml として返すことがあり、そのままだと JD2 はページとして中を読みに行ってしまう
+test('JD2へ渡すURLには directhttp:// を付けて、直接のダウンロードとして扱わせる', () => {
+  assert.equal(directHttpLink('https://file.example.com/a/1?auth_key=x'), 'directhttp://https://file.example.com/a/1?auth_key=x');
+});
+
+test('すでに directhttp:// が付いていれば二重に付けない', () => {
+  assert.equal(directHttpLink('directhttp://https://file.example.com/a'), 'directhttp://https://file.example.com/a');
 });
