@@ -91,6 +91,10 @@ Linkexにはログインしておくこと。処理中はLinkexのドライブ�
 - **専用ページ**（`dashboard.html`）とポップアップ（`popup.html`）
 - **共有ページのパネル**（`src/content/share-page.ts`）：Shadow DOM の中に描くので、Linkexの画面を崩さない
 
+## おまけ：拡張子の直し方
+
+拡張子が消えて画像か動画かわからなくなったファイルは、`scripts/fix-extensions.ps1` で中身から判定して直せる。使い方は [docs/fix-extensions.md](docs/fix-extensions.md)。
+
 ## ライセンス
 
 [MIT](LICENSE)
