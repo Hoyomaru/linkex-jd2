@@ -1,4 +1,5 @@
 import { directHttpLink } from '../shared/jd2-status';
+import { requestJd } from '../shared/jd2-request';
 import { loadSettings } from '../shared/settings';
 
 /**
@@ -11,23 +12,9 @@ export async function jd<T = unknown>(path: string, ...params: unknown[]): Promi
   const query = params.map((p) => encodeURIComponent(JSON.stringify(p))).join('&');
   const url = `${jdUrl.replace(/\/+$/, '')}/${path}${query ? `?${query}` : ''}`;
 
-  let res: Response | undefined;
-  // JD2はときどき接続を切ることがあるので、つながらなかったら少し待って何度か試す
-  for (let attempt = 0; attempt < 3 && !res; attempt++) {
-    if (attempt > 0) await sleep(500 * attempt);
-    try {
-      // JD2が固まっていても処理全体が止まらないよう、15秒で諦める
-      res = await fetch(url, { signal: AbortSignal.timeout(15_000), cache: 'no-store' });
-    } catch {
-      // 次の回へ
-    }
-  }
-  if (!res) {
-    throw new Error(
-      'JD2に接続できません。JD2が起動しているか、詳細設定の「Deprecated Api」がオンか、接続先の設定を確認してください',
-    );
-  }
-  const json = (await res.json().catch(() => null)) as { data?: T; type?: string } | null;
+  // 切られたら呼び直す。ずっとつながらなければ Jd2ConnectionError
+  const res = await requestJd(url);
+  const json = res.json as { data?: T; type?: string } | null;
   if (!res.ok || !json) {
     const hint = json?.type === 'AUTH_FAILED' ? '（JD2にリクエストを断られました。拡張機能を再読み込みしてください）' : '';
     throw new Error(`JD2のエラー: ${json?.type ?? `HTTP ${res.status}`}${hint}（${path}）`);
@@ -58,45 +45,72 @@ const CRAWL_TIMEOUT_MS = 60_000;
 export async function addDownload(url: string, opts: { dir?: string; out?: string } = {}): Promise<string> {
   const { downloadDir } = await loadSettings();
   const folder = joinDir(downloadDir || (await defaultFolder()), opts.dir ?? '');
-  const job = await jd<{ id: number }>('linkgrabberv2/addLinks', {
-    // CDN が application/xml で返すファイルをページとして読みに行かないよう、直接のダウンロードとして渡す
-    links: directHttpLink(url),
-    destinationFolder: folder,
-    // リンクグラバーでは同じ名前のパッケージにまとめられてしまうので、保存先ごとに違う名前にする
-    packageName: opts.dir || 'Linkex',
-    overwritePackagizerRules: true,
-    autostart: false,
-    assignJobID: true,
-  });
-
+  let job: { id: number } | undefined;
   try {
-    const link = await waitCrawled(job.id);
+    job = await jd<{ id: number }>('linkgrabberv2/addLinks', {
+      // CDN が application/xml で返すファイルをページとして読みに行かないよう、直接のダウンロードとして渡す
+      links: directHttpLink(url),
+      destinationFolder: folder,
+      // リンクグラバーでは同じ名前のパッケージにまとめられてしまうので、保存先ごとに違う名前にする
+      packageName: opts.dir || 'Linkex',
+      overwritePackagizerRules: true,
+      autostart: false,
+      assignJobID: true,
+    });
+    const link = await waitCrawled(job.id, url);
     if (opts.out) await jd('linkgrabberv2/renameLink', link.uuid, opts.out);
     await jd('linkgrabberv2/moveToDownloadlist', [link.uuid], []);
     // 止まっていたら動かす（動いていれば何も起きない）
     await jd('downloadcontroller/start').catch(() => undefined);
     return String(link.uuid);
   } catch (e) {
-    // 途中で失敗したら、リンクグラバーに残った分を片付ける
-    const left = await jd<{ uuid: number }[]>('linkgrabberv2/queryLinks', { jobUUIDs: [job.id] }).catch(() => []);
+    // 途中で失敗したら、リンクグラバーに残った分を片付ける。
+    // 追加の返事を受け取れなかった場合も、JD2 は追加していることが多い。読み取りが終わって出てくるのを少し待ってから URL で探す
+    if (!job) await sleep(2_000);
+    const byJob = job
+      ? await jd<{ uuid: number }[]>('linkgrabberv2/queryLinks', { jobUUIDs: [job.id] }).catch(() => [])
+      : [];
+    const byUrl = await grabbedByUrl(url).catch(() => []);
+    const left = [...new Map([...byJob, ...byUrl].map((l) => [l.uuid, l])).values()];
     if (left.length) await jd('linkgrabberv2/removeLinks', left.map((l) => l.uuid), []).catch(() => undefined);
     throw e;
   }
 }
 
-/** 追加したリンクがリンクグラバーに出てくるのを待つ。URLが使えないとJD2は何も出さずに終わる */
-async function waitCrawled(jobId: number): Promise<{ uuid: number }> {
+/** リンクグラバーにある、この URL のリンク */
+async function grabbedByUrl(url: string): Promise<{ uuid: number }[]> {
+  const plain = url.replace(/^directhttp:\/\//i, '');
+  const links = await jd<{ uuid: number; url?: string }[]>('linkgrabberv2/queryLinks', { url: true, maxResults: -1, startAt: 0 });
+  return links.filter((l) => l.url === plain);
+}
+
+/** ジョブが終わってから、同じ URL のリンクが出てくるのを待つ時間 */
+const SAME_URL_WAIT_MS = 5_000;
+
+/**
+ * 追加したリンクがリンクグラバーに出てくるのを待つ。URLが使えないとJD2は何も出さずに終わる。
+ * JD2 は接続を切っても追加は受け付けていることが多く、呼び直すと同じ URL を2回追加することになる。
+ * JD2 は2回目を重複として捨てるので、こちらのジョブには何も出てこない。そのときは URL で探して、先に入った方を使う
+ */
+async function waitCrawled(jobId: number, url: string): Promise<{ uuid: number }> {
   const started = Date.now();
-  let jobGone = false;
-  for (let delay = 300; Date.now() - started < CRAWL_TIMEOUT_MS; delay = Math.min(delay * 1.5, 3000)) {
+  let jobGoneAt = 0;
+  // 実測では 0.2〜1.6秒で出てくる。JD2への確認はPCの中で軽いので、細かく見る
+  for (let delay = 100; Date.now() - started < CRAWL_TIMEOUT_MS; delay = Math.min(delay * 1.5, 1000)) {
     await sleep(delay);
     const links = await jd<{ uuid: number }[]>('linkgrabberv2/queryLinks', { jobUUIDs: [jobId] });
     if (links.length > 0) return links[0];
-    // 読み取りが終わってもリンクが出てこなければ、JD2が受け付けなかった（もう1回だけ見てから諦める）
-    if (jobGone) break;
+    if (jobGoneAt) {
+      const same = await grabbedByUrl(url);
+      if (same.length > 0) return same[0];
+      // 読み取りが終わっても出てこなければ、JD2が受け付けなかった
+      if (Date.now() - jobGoneAt >= SAME_URL_WAIT_MS) break;
+      continue;
+    }
     const jobs = await jd<unknown[]>('linkgrabberv2/queryLinkCrawlerJobs', { jobIds: [jobId] });
-    jobGone = jobs.length === 0;
+    if (jobs.length === 0) jobGoneAt = Date.now();
   }
+  const jobGone = jobGoneAt > 0;
   throw new Error(
     jobGone
       ? 'JD2がリンクを受け付けませんでした（ダウンロードURLが使えない・JD2に同じURLが残っているなど）'

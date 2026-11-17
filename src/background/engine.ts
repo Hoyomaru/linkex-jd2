@@ -5,6 +5,7 @@ import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { jdLinkState } from '../shared/jd2-status';
+import { Jd2ConnectionError } from '../shared/jd2-request';
 import { addDownload, discardLinks, queryLinks } from './jd2';
 import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
@@ -17,6 +18,10 @@ const COPY_FIND_MS = 60_000;
 const IDLE_WAIT_MS = 1_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const CAPACITY_WAIT_MS = 30_000;
+/** JD2 にこの時間つながらないままなら、全体を止めて知らせる */
+const JD_DOWN_LIMIT_MS = 3 * 60_000;
+/** JD2 につながらなかった件を、もう一度渡してみるまでの間 */
+const JD_RETRY_MS = 5_000;
 const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（設定で変更できます）';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,6 +38,12 @@ const workers = new Map<string, Promise<void>>();
 /** この時刻までは新しい件を始めない（容量不足と言われた後・転送量の上限） */
 let capacityWaitUntil = 0;
 let trafficWaitUntil = 0;
+/** JD2 の完了を取り込んだ時刻 */
+let downloadsRefreshedAt = 0;
+/** JD2 の完了を取り込む間隔 */
+const DOWNLOADS_REFRESH_MS = 3_000;
+/** JD2 につながらなくなった時刻（つながっていれば 0） */
+let jdDownSince = 0;
 /** 保存中のコピーに使ってよい容量（バイト） */
 let budget: { bytes: number; at: number } | null = null;
 
@@ -58,6 +69,7 @@ export async function start(): Promise<void> {
   await writeEngine({ paused: false, message: '開始しました' });
   takeFrozenReloads(); // 前回までの分は数えない
   capacityWaitUntil = 0;
+  jdDownSince = 0;
   trafficWaitUntil = 0;
   budget = null;
   await logEvent('info', '処理を開始しました');
@@ -84,7 +96,11 @@ async function runLoop(): Promise<void> {
     }
 
     const settings = await loadSettings();
-    await refreshDownloads();
+    // JD2 の一覧は全件で返ってくるので、毎周（1秒ごと）ではなく間をあけて取り込む
+    if (Date.now() - downloadsRefreshedAt >= DOWNLOADS_REFRESH_MS) {
+      downloadsRefreshedAt = Date.now();
+      await refreshDownloads();
+    }
     const items = await readQueue();
     const downloading = items.filter((i) => i.state === 'downloading').length;
     const prep = items.filter((i) => PREP_STATES.includes(i.state));
@@ -231,7 +247,20 @@ async function processItem(item: QueueItem): Promise<void> {
       budget = null;
       return;
     }
-    if (e instanceof LinkexLoginError || /JD2に接続できません|AUTH_FAILED/.test(errorText(e))) {
+    if (e instanceof Jd2ConnectionError) {
+      // JD2 はときどき続けて接続を切るので、しばらくは件をそのままにして待つ。
+      // 長く続いたら（JD2が落ちている・設定が違う）全体を止めて知らせる
+      jdDownSince ||= Date.now();
+      if (Date.now() - jdDownSince >= JD_DOWN_LIMIT_MS) {
+        jdDownSince = 0;
+        await stopWithNotice(errorText(e));
+        return;
+      }
+      await updateItem(item.id, { note: 'JD2の応答待ち' });
+      await sleep(JD_RETRY_MS);
+      return;
+    }
+    if (e instanceof LinkexLoginError || /AUTH_FAILED/.test(errorText(e))) {
       // ログイン切れやJD2側の問題は件ごとの失敗に数えず、全体を止めて知らせる
       await stopWithNotice(errorText(e));
       return;
@@ -276,6 +305,27 @@ async function fail(item: QueueItem, message: string): Promise<void> {
   if (!keepForDelete) await sleep(2_000);
 }
 
+/**
+ * 1件ごとに、どの段階に何秒かかったかを数え、JD2に渡し終えたら処理ログに残す（遅いところを探すため）。
+ * Service Worker が止められたら数えた分は消えるが、記録用なので構わない
+ */
+const laps = new Map<string, Map<string, number>>();
+function lap(id: string, label: string, since: number): number {
+  const now = Date.now();
+  const m = laps.get(id) ?? new Map<string, number>();
+  m.set(label, (m.get(label) ?? 0) + (now - since));
+  laps.set(id, m);
+  return now;
+}
+async function logLaps(item: QueueItem): Promise<void> {
+  const m = laps.get(item.id);
+  laps.delete(item.id);
+  if (!m) return;
+  const total = [...m.values()].reduce((a, b) => a + b, 0);
+  const parts = [...m].map(([k, ms]) => `${k} ${(ms / 1000).toFixed(1)}`).join('・');
+  await logEvent('info', `内訳（秒）: 計 ${(total / 1000).toFixed(1)}・${parts} — ${item.name}`);
+}
+
 /** 自分のファイル（ルート）のID一覧 */
 async function listRootIds(): Promise<Map<string, any>> {
   const list = await collectPages((page) => api.rootFiles(page));
@@ -293,7 +343,9 @@ async function stepCopy(item: QueueItem): Promise<void> {
     await logEvent('info', `重複のため省略: ${item.name}`);
     return;
   }
+  let t = Date.now();
   const before = await listRootIds();
+  t = lap(item.id, `保存前の一覧(${before.size}件)`, t);
   await updateItem(item.id, {
     state: 'copying',
     beforeIds: [...before.keys()],
@@ -311,6 +363,7 @@ async function stepCopy(item: QueueItem): Promise<void> {
   // 応答の時点で保存が終わっていれば、完了待ちを省く
   const doneAlready = String(res?.task?.status ?? res?.status ?? '').toLowerCase() === 'success';
   if (taskId && !doneAlready) await waitTask(String(taskId));
+  lap(item.id, '保存', t);
   await updateItem(item.id, { copiedAt: Date.now() });
 
   const fresh = (await readQueue()).find((i) => i.id === item.id);
@@ -342,8 +395,10 @@ async function waitTask(taskId: string): Promise<void> {
  * 合うものがなくても同じ名前の新しいファイルが1つだけならそれを使う。
  */
 async function stepFindCopy(item: QueueItem): Promise<void> {
+  const t = Date.now();
   const before = new Set(item.beforeIds ?? []);
   const now = await listRootIds();
+  lap(item.id, 'コピー探し', t);
   const fresh = [...now.entries()].filter(([id]) => !before.has(id)).map(([, f]) => f);
   const sizeOf = (f: any) => Number(f.size);
   // 同時に進めているほかの件のコピーとして決まったファイルは選ばない
@@ -373,7 +428,9 @@ async function claimedByOthers(id: string): Promise<Set<string>> {
 
 async function stepSend(item: QueueItem): Promise<void> {
   if (!item.destFileId) throw new Error('コピーのIDがありません');
+  let t = Date.now();
   const data = await api.fileGet(item.destFileId);
+  t = lap(item.id, 'URL取得', t);
   const file = data?.file ?? data;
   const url = String(file?.url ?? '');
   const hash = contentHash(file) ?? item.hash;
@@ -388,6 +445,8 @@ async function stepSend(item: QueueItem): Promise<void> {
 
   // 再試行のときも同じ保存先・同じ名前で渡すので、JD2が途中まで落としたファイルの続きから取る
   const jdId = await addDownload(url, { dir: item.relDir, out: item.outName });
+  lap(item.id, 'JD2へ', t);
+  jdDownSince = 0;
   await updateItem(item.id, {
     state: 'deleting',
     hash,
@@ -413,6 +472,7 @@ async function stepDelete(item: QueueItem): Promise<void> {
     return;
   }
 
+  const t = Date.now();
   try {
     await api.moveToTrash(destId);
   } catch {
@@ -421,8 +481,10 @@ async function stepDelete(item: QueueItem): Promise<void> {
   await api.deleteForever(destId);
 
   const after: Partial<QueueItem> = { destFileId: undefined, beforeIds: undefined };
+  lap(item.id, '削除', t);
   if (item.jdId) {
     await updateItem(item.id, { ...after, state: 'downloading', note: undefined });
+    await logLaps(item);
   } else if (item.note === '同じ中身をダウンロード済み') {
     await updateItem(item.id, { ...after, state: 'skipped' });
   } else {
@@ -449,6 +511,7 @@ export async function refreshDownloads(): Promise<void> {
   let links: Awaited<ReturnType<typeof queryLinks>>;
   try {
     links = await queryLinks(items.map((i) => i.jdId!));
+    jdDownSince = 0;
   } catch {
     return; // JD2に一時的につながらない場合は次回また確認
   }
