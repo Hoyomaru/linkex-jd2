@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { directHttpLink, jdLinkState } from '../src/shared/jd2-status.ts';
+import { cdnObjectSize, directHttpLink, jdLinkState } from '../src/shared/jd2-status.ts';
 
 // 値は JD2 v2 build 48637 の downloadsV2/queryLinks で実際に返ってきたもの
 
@@ -43,4 +43,11 @@ test('JD2へ渡すURLには directhttp:// を付けて、直接のダウンロ�
 
 test('すでに directhttp:// が付いていれば二重に付けない', () => {
   assert.equal(directHttpLink('directhttp://https://file.example.com/a'), 'directhttp://https://file.example.com/a');
+});
+
+test('CDN の URL の最後の段から、配っているファイルの大きさを読む', () => {
+  assert.equal(cdnObjectSize('https://file.fastspeedcdn.com/pool/pub/c1/3f/00/abc/10485760?auth_key=1-x&ip=1.2.3.4'), 10485760);
+  assert.equal(cdnObjectSize('directhttp://https://file.fastspeedcdn.com/pool/pub/a/652460000?uid=1'), 652460000);
+  assert.equal(cdnObjectSize('https://file.fastspeedcdn.com/pool/pub/a/file.mp4'), null);
+  assert.equal(cdnObjectSize('not a url'), null);
 });

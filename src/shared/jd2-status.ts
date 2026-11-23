@@ -41,3 +41,19 @@ export function jdLinkState(link: JdLinkLike | undefined, expectedSize: number |
 export function directHttpLink(url: string): string {
   return /^directhttp:\/\//i.test(url) ? url : `directhttp://${url}`;
 }
+
+/**
+ * Linkex の CDN の URL の最後の段にある、配っているファイルの大きさ（例: /pool/pub/…/10485760）。
+ * 共有側の file/get が返す大きさは、動画などで実際に配られる大きさより少し大きいことがあるので、
+ * 受け取った量が足りているかは、こちらで確かめる。読み取れなければ null
+ */
+export function cdnObjectSize(url: string): number | null {
+  try {
+    const last = new URL(url.replace(/^directhttp:\/\//i, '')).pathname.split('/').filter(Boolean).pop() ?? '';
+    if (!/^\d{1,15}$/.test(last)) return null;
+    const n = Number(last);
+    return n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}

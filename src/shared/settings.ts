@@ -9,6 +9,11 @@ export interface Settings {
   pauseOnTrafficLimit: boolean;
   /** JD2に渡しておく数（URLには期限があるので、JD2の中で長く待たせないよう、渡すのはこの数まで） */
   maxDownloads: number;
+  /**
+   * JD2に渡した件を「強制ダウンロード開始」にする。JD2の同時ダウンロード数の設定を超えて始まるので、
+   * JD2をほかの用途と共用していても、JD2の設定を変えずに「JD2に渡しておく数」まで同時に落とせる
+   */
+  forceStart: boolean;
   /** Linkex側の保存〜削除を同時に進める数（APIを同時に呼ぶ数も同じ） */
   parallelItems: number;
   /**
@@ -36,6 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pauseOnTrafficLimit: true,
   maxDownloads: 3,
   parallelItems: 3,
+  forceStart: false,
   prefetchItems: 1,
   directDownload: true,
   cleanupLeftovers: false,

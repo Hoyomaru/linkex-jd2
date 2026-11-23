@@ -155,6 +155,7 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('parallelItems') as HTMLInputElement).value = String(s.parallelItems);
   (form.elements.namedItem('prefetchItems') as HTMLInputElement).value = String(s.prefetchItems);
   (form.elements.namedItem('directDownload') as HTMLInputElement).checked = s.directDownload;
+  (form.elements.namedItem('forceStart') as HTMLInputElement).checked = s.forceStart;
   (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
   (form.elements.namedItem('cleanupLeftovers') as HTMLInputElement).checked = s.cleanupLeftovers;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
@@ -170,6 +171,7 @@ form.addEventListener('submit', async (ev) => {
     maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
     parallelItems: Math.min(6, Math.max(1, Number(v('parallelItems').value) || 1)),
     directDownload: v('directDownload').checked,
+    forceStart: v('forceStart').checked,
     prefetchItems: Math.min(3, Math.max(0, Math.floor(Number(v('prefetchItems').value) || 0))),
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     cleanupLeftovers: v('cleanupLeftovers').checked,

@@ -4,9 +4,9 @@ import { findOwnCopy, handedToJd, PREP_STATES, pickLeftovers, pickStarts } from 
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
-import { jdLinkState } from '../shared/jd2-status';
+import { cdnObjectSize, jdLinkState } from '../shared/jd2-status';
 import { Jd2ConnectionError } from '../shared/jd2-request';
-import { addDownload, discardLinks, queryLinks } from './jd2';
+import { addDownload, discardLinks, nudgeLinks, queryLinks, type JdLink } from './jd2';
 import { notify } from './notify';
 import { logEvent, readEngine, readHashes, readQueue, rememberHash, updateItem, updateItems, writeEngine } from './store';
 
@@ -501,7 +501,8 @@ async function stepDirect(item: QueueItem): Promise<boolean> {
     const file = data?.file ?? data;
     const url = String(file?.url ?? '');
     const hash = contentHash(file) ?? item.hash;
-    const fileSize = Number(file?.size);
+    // 受け取った量の確かめには、CDN が実際に配っている大きさ（URL の最後の段）を使う
+    const fileSize = cdnObjectSize(url) ?? Number(file?.size);
     if (!item.force && hash && (await readHashes())[hash]) {
       await updateItem(item.id, { state: 'skipped', hash, note: '同じ中身をダウンロード済み' });
       await logEvent('info', `重複のため省略: ${item.name}`);
@@ -652,7 +653,8 @@ async function sendToJd(item: QueueItem): Promise<void> {
   const url = String(file?.url ?? '');
   const hash = contentHash(file) ?? item.hash;
   // 共有一覧のサイズは実際とずれることがあるので、完了の確かめには自分のコピーのサイズを使う
-  const fileSize = Number(file?.size);
+  // 受け取った量の確かめには、CDN が実際に配っている大きさ（URL の最後の段）を使う
+    const fileSize = cdnObjectSize(url) ?? Number(file?.size);
 
   if (!item.force && hash && (await readHashes())[hash]) {
     await updateItem(item.id, { state: 'deleting', hash, note: '同じ中身をダウンロード済み' });
@@ -752,6 +754,32 @@ async function watchStall(loaded: number, active: number): Promise<void> {
   await notify('stalled', 'ダウンロードが進んでいません', `JD2で${minutes}分以上進んでいません。JD2の画面を確認してください`);
 }
 
+/** JD2で動いているのにこの時間進まなければ、止めて動かし直す。動かし直してもまた進まなければ、やり直す */
+const STUCK_MS = 10 * 60_000;
+const stuckWatch = new Map<string, { bytes: number; since: number; nudged: boolean }>();
+
+/** 動いているのに進まないリンクを見張る。nudge: 止めて動かし直す / give-up: 失敗としてやり直す */
+function watchStuck(jdId: string, link: JdLink): 'ok' | 'nudge' | 'give-up' {
+  const bytes = link.bytesLoaded ?? 0;
+  if (!link.running || (link.speed ?? 0) > 0) {
+    stuckWatch.delete(jdId);
+    return 'ok';
+  }
+  const w = stuckWatch.get(jdId);
+  if (!w || bytes !== w.bytes) {
+    stuckWatch.set(jdId, { bytes, since: Date.now(), nudged: false });
+    return 'ok';
+  }
+  if (Date.now() - w.since < STUCK_MS) return 'ok';
+  if (!w.nudged) {
+    w.nudged = true;
+    w.since = Date.now();
+    return 'nudge';
+  }
+  stuckWatch.delete(jdId);
+  return 'give-up';
+}
+
 async function doRefreshDownloads(): Promise<void> {
   const items = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId);
   if (items.length === 0) return;
@@ -772,9 +800,16 @@ async function doRefreshDownloads(): Promise<void> {
   const logs: [Parameters<typeof logEvent>[0], string][] = [];
   // JD2があきらめたリンク。保存し直して新しいURLで渡すので、落としかけのファイルごとJD2の一覧から消す
   const toDiscard: string[] = [];
+  // 動いているのに進まないリンク。止めて動かし直す
+  const toNudge: string[] = [];
   for (const item of items) {
     const link = byId.get(item.jdId!);
     const state = jdLinkState(link, item.fileSize ?? null);
+    const stuck = state === 'active' && link ? watchStuck(item.jdId!, link) : 'ok';
+    if (stuck === 'nudge') {
+      toNudge.push(item.jdId!);
+      logs.push(['warn', `JD2で${STUCK_MS / 60_000}分以上進まないため、止めて動かし直します: ${item.name}`]);
+    }
     const progress: Partial<QueueItem> = link
       ? {
           totalLength: link.bytesTotal && link.bytesTotal > 0 ? link.bytesTotal : undefined,
@@ -790,11 +825,13 @@ async function doRefreshDownloads(): Promise<void> {
       if (item.hash) await rememberHash(item.hash, item.name);
       patches.set(item.id, { ...progress, state: 'done', jdId: undefined });
       logs.push(['info', `完了: ${item.name}`]);
-    } else if (state === 'failed' || state === 'truncated') {
+    } else if (state === 'failed' || state === 'truncated' || stuck === 'give-up') {
       toDiscard.push(item.jdId!);
       const attempts = item.attempts + 1;
       const reason =
-        state === 'truncated'
+        stuck === 'give-up'
+          ? `動かし直しても${STUCK_MS / 60_000}分以上進みませんでした`
+          : state === 'truncated'
           ? `途中で切れました（${formatBytes(Math.max(link?.bytesLoaded ?? 0, link?.bytesTotal ?? 0))} / ${formatBytes(item.fileSize ?? null)}）`
           : link?.status || '不明';
       patches.set(item.id, {
@@ -821,6 +858,11 @@ async function doRefreshDownloads(): Promise<void> {
   await updateItems(patches, (i) => i.state === 'downloading' && i.jdId === jdIdOf.get(i.id));
   for (const [id, patch] of patches) if (patch.state) progressSavedAt.delete(id);
   for (const [level, message] of logs) await logEvent(level, message);
+  try {
+    await nudgeLinks(toNudge, (await loadSettings()).forceStart);
+  } catch (e) {
+    await logEvent('warn', `JD2のリンクを動かし直せませんでした: ${errorText(e)}`);
+  }
   try {
     await discardLinks(toDiscard);
   } catch (e) {

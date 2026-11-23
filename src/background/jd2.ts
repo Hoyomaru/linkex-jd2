@@ -72,7 +72,7 @@ const CRAWL_TIMEOUT_MS = 60_000;
  * dir は基準フォルダからの相対パスを受け取り、設定の基準フォルダ（空なら JD2 の既定）とつなげる。
  */
 export async function addDownload(url: string, opts: { dir?: string; out?: string } = {}): Promise<string> {
-  const { downloadDir } = await loadSettings();
+  const { downloadDir, forceStart } = await loadSettings();
   const folder = joinDir(downloadDir || (await defaultFolder()), opts.dir ?? '');
   let job: { id: number } | undefined;
   try {
@@ -91,6 +91,8 @@ export async function addDownload(url: string, opts: { dir?: string; out?: strin
     await jd('linkgrabberv2/moveToDownloadlist', [link.uuid], []);
     // 止まっていたら動かす（動いていれば何も起きない）
     await jd('downloadcontroller/start').catch(() => undefined);
+    // JD2の同時ダウンロード数の設定に関係なく、すぐ始めさせる（失敗しても、ふつうの順番で始まる）
+    if (forceStart) await jd('downloadsV2/forceDownload', [link.uuid], []).catch(() => undefined);
     return String(link.uuid);
   } catch (e) {
     // 途中で失敗したら、リンクグラバーに残った分を片付ける。
@@ -189,6 +191,20 @@ export async function queryLinks(ids: string[]): Promise<JdLink[]> {
 export async function discardLinks(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   await jd('downloadsV2/cleanup', ids.map(Number), [], 'DELETE_ALL', 'REMOVE_LINKS_AND_DELETE_FILES', 'SELECTED');
+}
+
+/**
+ * 動いているのに進まなくなったリンクを、いったん止めて動かし直す（受け取った分は残り、続きから再開する）。
+ * 全部受け取ったのに仕上げ（.part を外す）に進まず「開始中...」のまま止まることがあり、これで抜けられる
+ */
+export async function nudgeLinks(ids: string[], force: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  const links = ids.map(Number);
+  await jd('downloadsV2/setEnabled', false, links, []);
+  await sleep(2_000);
+  await jd('downloadsV2/setEnabled', true, links, []);
+  await jd('downloadcontroller/start').catch(() => undefined);
+  if (force) await jd('downloadsV2/forceDownload', links, []).catch(() => undefined);
 }
 
 /** JD2全体のダウンロード速度（バイト/秒） */
