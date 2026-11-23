@@ -11,8 +11,18 @@ export interface Settings {
   maxDownloads: number;
   /** Linkex側の保存〜削除を同時に進める数（APIを同時に呼ぶ数も同じ） */
   parallelItems: number;
+  /**
+   * 共有のファイルを自分のストレージに保存せず、共有から直接ダウンロードURLを発行してJD2へ渡す。
+   * 直接取れなかった件だけ、これまでどおり保存 → URL発行 → 完全削除 で取る
+   */
+  directDownload: boolean;
   /** JD2の空き待ちのあいだに、先に保存しておく数（先読み）。0 なら空きができてから保存する */
   prefetchItems: number;
+  /**
+   * 自分のストレージ（ルートとゴミ箱）に残ったファイルを、Linkex側で処理中の件がないときに完全削除する。
+   * 保存前からあったファイルも消すので、自分のファイルを置いていない人向け
+   */
+  cleanupLeftovers: boolean;
   /** すべて終わったとき・止まったときにWindowsの通知を出す */
   notifications: boolean;
   /** 右クリックやページ内のリンク収集で追加したら、すぐ開始する */
@@ -27,6 +37,8 @@ export const DEFAULT_SETTINGS: Settings = {
   maxDownloads: 3,
   parallelItems: 3,
   prefetchItems: 1,
+  directDownload: true,
+  cleanupLeftovers: false,
   notifications: true,
   autoStartOnAdd: true,
 };

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findOwnCopy, handedToJd, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
+import { findOwnCopy, handedToJd, pickLeftovers, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -185,4 +185,14 @@ test('JD2に渡し済みの数には、渡した後の削除中の件と渡し�
   ];
   assert.equal(handedToJd(items, 0), 2);
   assert.equal(handedToJd(items, 1), 3);
+});
+
+test('片付けの対象は、フォルダとキューの件のコピーを除いたファイル', () => {
+  const files = [
+    { id: 'a', type: 'file' },
+    { id: 'b', type: 'folder' },
+    { id: 'c', type: 'file' },
+  ];
+  const got = pickLeftovers(files, new Set(['c']), (f) => f.type === 'folder');
+  assert.deepEqual(got.map((f) => f.id), ['a']);
 });

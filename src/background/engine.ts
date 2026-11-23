@@ -1,8 +1,8 @@
-import { contentHash, formatBytes, unwrapFile } from '../shared/files';
+import { contentHash, formatBytes, isFolder, unwrapFile } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
-import { findOwnCopy, handedToJd, PREP_STATES, pickStarts } from '../shared/scheduler';
+import { findOwnCopy, handedToJd, PREP_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
-import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
+import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { jdLinkState } from '../shared/jd2-status';
 import { Jd2ConnectionError } from '../shared/jd2-request';
@@ -21,6 +21,8 @@ const TRAFFIC_RECHECK_MS = 5 * 60_000;
 const TRAFFIC_CACHE_MS = 60_000;
 /** 保存前の一覧として、ほかの件が少し前に取り始めた一覧を使ってよい時間 */
 const BEFORE_LIST_REUSE_MS = 2_000;
+/** 残ったコピーの片付けの間隔（容量が足りないと言われたら、次に手が空いたときすぐ片付ける） */
+const CLEANUP_INTERVAL_MS = 10 * 60_000;
 /** 先読みで保存した件に付けるメモ */
 const PREFETCHED_NOTE = '保存済み（JD2の空き待ち）';
 const CAPACITY_WAIT_MS = 30_000;
@@ -28,6 +30,12 @@ const CAPACITY_WAIT_MS = 30_000;
 const JD_DOWN_LIMIT_MS = 3 * 60_000;
 /** JD2 につながらなかった件を、もう一度渡してみるまでの間 */
 const JD_RETRY_MS = 5_000;
+/** Linkex がこの時間応えないままなら（ネットが切れているなど）、全体を止めて知らせる */
+const LINKEX_DOWN_LIMIT_MS = 10 * 60_000;
+/** Linkex が一時的に応えなかった件を、もう一度進めてみるまでの間 */
+const LINKEX_RETRY_MS = 10_000;
+/** ダウンロード中の件がどれもこの時間進まなければ、知らせる（JD2が確認を待っている・止められているなど） */
+const STALL_NOTICE_MS = 15 * 60_000;
 const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（設定で変更できます）';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,10 +58,14 @@ let downloadsRefreshedAt = 0;
 const DOWNLOADS_REFRESH_MS = 3_000;
 /** JD2 につながらなくなった時刻（つながっていれば 0） */
 let jdDownSince = 0;
+/** Linkex が応えなくなった時刻（応えていれば 0） */
+let linkexDownSince = 0;
 /** 保存中のコピーに使ってよい容量（バイト） */
 let budget: { bytes: number; at: number } | null = null;
 /** 転送量の残りの見込み（バイト）。調べた時刻から TRAFFIC_CACHE_MS の間だけ使う */
 let trafficLeft: { bytes: number; at: number } | null = null;
+/** 残ったコピーを最後に片付けた時刻（0 なら次に手が空いたらすぐ片付ける） */
+let cleanedAt = 0;
 /** いまJD2に渡している最中の件の数（先読みした件を渡しすぎないように数える） */
 let sendingNow = 0;
 
@@ -80,9 +92,12 @@ export async function start(): Promise<void> {
   takeFrozenReloads(); // 前回までの分は数えない
   capacityWaitUntil = 0;
   jdDownSince = 0;
+  linkexDownSince = 0;
   trafficWaitUntil = 0;
   budget = null;
   trafficLeft = null;
+  stall = null;
+  cleanedAt = 0;
   await logEvent('info', '処理を開始しました');
   kick();
 }
@@ -122,6 +137,13 @@ async function runLoop(): Promise<void> {
       return;
     }
 
+    // 自分のストレージに残ったコピー（時間切れの後に遅れてできたもの・削除の途中で止まったものなど）を片付ける。
+    // Linkex側で処理中の件があると、保存したばかりのコピーを消してしまうので、手が空いているときだけ
+    if (settings.cleanupLeftovers && workers.size === 0 && prep.length === 0 && Date.now() - cleanedAt >= CLEANUP_INTERVAL_MS) {
+      cleanedAt = Date.now();
+      if (await cleanupLeftovers(items)) budget = null;
+    }
+
     // 保存中のコピーに使ってよい容量。コピーを置いていないときに調べ直す（置いている間は二重に数えてしまうため）
     if (!budget || (prep.length === 0 && Date.now() - budget.at > BUDGET_REFRESH_MS)) {
       budget = { bytes: await storageBudget(), at: Date.now() };
@@ -132,7 +154,8 @@ async function runLoop(): Promise<void> {
       parallel: Math.max(1, settings.parallelItems),
       budgetBytes: budget.bytes,
       maxDownloads: settings.maxDownloads,
-      prefetch: Math.max(0, settings.prefetchItems),
+      // 保存せずに取るときは、先に保存しておくものがない
+      prefetch: settings.directDownload ? 0 : Math.max(0, settings.prefetchItems),
     };
     let picks = pickStarts(items, { ...ctx, allowNew: Date.now() >= capacityWaitUntil && Date.now() >= trafficWaitUntil });
     const newPicks = waiting.filter((w) => picks.includes(w.id));
@@ -147,7 +170,11 @@ async function runLoop(): Promise<void> {
       picks = pickStarts(items, { ...ctx, allowNew: false });
     }
     for (const id of picks) {
-      workers.set(id, runWorker(id).finally(() => workers.delete(id)));
+      // 担当が思わぬ理由で失敗しても、全体の指示役は止めない（その件は次の周回で割り当て直す）
+      const worker = runWorker(id)
+        .catch((e) => logEvent('warn', `処理中に問題が起きたため、やり直します: ${errorText(e)}`))
+        .finally(() => workers.delete(id));
+      workers.set(id, worker);
     }
 
     await writeEngine({ message: statusMessage(items, downloading, waiting.length, settings.maxDownloads) });
@@ -185,6 +212,41 @@ async function finish(items: QueueItem[]): Promise<void> {
     errors ? `終わりました（失敗 ${errors}件）` : 'すべて終わりました',
     `完了 ${done}件${errors ? `・失敗 ${errors}件。専用ページで再試行できます` : ''}`,
   );
+}
+
+/**
+ * 自分のストレージのルートとゴミ箱に残ったファイルを完全削除する（設定でオンにしたときだけ）。
+ * キューの件のコピーとして決まっているものは消さない。消した数を返す
+ */
+async function cleanupLeftovers(items: QueueItem[]): Promise<number> {
+  const claimed = new Set(items.filter((i) => i.destFileId).map((i) => String(i.destFileId)));
+  let count = 0;
+  let bytes = 0;
+  try {
+    const root = (await collectPages((page) => api.rootFiles(page))).map(unwrapFile);
+    for (const f of pickLeftovers(root, claimed, isFolder)) {
+      if ((await readEngine()).paused) break;
+      try {
+        await api.moveToTrash(String(f.id));
+      } catch {
+        // ゴミ箱に移せなくても、完全削除を試す
+      }
+      await api.deleteForever(String(f.id));
+      count++;
+      bytes += Number(f.size) || 0;
+    }
+    const trash = (await collectPages((page) => api.trashList(page))).map(unwrapFile);
+    for (const f of pickLeftovers(trash, claimed, isFolder)) {
+      if ((await readEngine()).paused) break;
+      await api.deleteForever(String(f.id));
+      count++;
+      bytes += Number(f.size) || 0;
+    }
+  } catch (e) {
+    await logEvent('warn', `残ったファイルの片付けに失敗しました: ${errorText(e)}`);
+  }
+  if (count > 0) await logEvent('info', `自分のストレージに残っていたファイルを ${count}件（${formatBytes(bytes)}）完全削除しました`);
+  return count;
 }
 
 /** 保存中のコピーに使ってよい容量。5GBとLinkexの空き容量の小さいほう */
@@ -241,7 +303,7 @@ async function processItem(item: QueueItem): Promise<void> {
     switch (item.state) {
       case 'pending':
       case 'retry':
-        await stepCopy(item);
+        if (!(await loadSettings()).directDownload || !(await stepDirect(item))) await stepCopy(item);
         break;
       case 'copying':
         await stepFindCopy(item);
@@ -270,6 +332,7 @@ async function processItem(item: QueueItem): Promise<void> {
       await logEvent('warn', `容量が足りないため待機: ${item.name}`);
       capacityWaitUntil = Date.now() + CAPACITY_WAIT_MS;
       budget = null;
+      cleanedAt = 0;
       return;
     }
     if (e instanceof Jd2ConnectionError) {
@@ -283,6 +346,22 @@ async function processItem(item: QueueItem): Promise<void> {
       }
       await updateItem(item.id, { note: 'JD2の応答待ち' });
       await sleep(JD_RETRY_MS);
+      return;
+    }
+    if (e instanceof LinkexTransientError) {
+      // ネットが切れた・Linkexが一時的に不調なときは、件ごとの失敗に数えずに待つ。
+      // 長く続いたら全体を止めて知らせる
+      if (!linkexDownSince || linkexOkAt() > linkexDownSince) {
+        linkexDownSince = Date.now();
+        await logEvent('warn', `${errorText(e)}（しばらく待って続けます）`);
+      }
+      if (Date.now() - linkexDownSince >= LINKEX_DOWN_LIMIT_MS) {
+        linkexDownSince = 0;
+        await stopWithNotice(`Linkexが${LINKEX_DOWN_LIMIT_MS / 60_000}分以上応答しません。ネットの接続を確かめてから「開始」を押してください`);
+        return;
+      }
+      await updateItem(item.id, { note: 'Linkexの応答待ち' });
+      await sleep(LINKEX_RETRY_MS);
       return;
     }
     if (e instanceof LinkexLoginError || /AUTH_FAILED/.test(errorText(e))) {
@@ -387,6 +466,69 @@ function listRoot(notBefore: number): RootListing {
 
 /** 件ごとに、コピー探しで最後に見た一覧を取り始めた時刻（同じ一覧を何度も見ないため） */
 const findListedAt = new Map<string, number>();
+
+/**
+ * 自分のストレージに保存せず、共有から直接ダウンロードURLを発行してJD2へ渡す。
+ * 直接は取れないと分かったら false を返す（呼び出し元が保存してから取る）
+ */
+async function stepDirect(item: QueueItem): Promise<boolean> {
+  if (!item.force && item.hash && (await readHashes())[item.hash]) {
+    await updateItem(item.id, { state: 'skipped', note: '同じ中身をダウンロード済み' });
+    await logEvent('info', `重複のため省略: ${item.name}`);
+    return true;
+  }
+  // URLには期限があるので、JD2に渡しておく数に空きがあるときだけ発行する（空きがなければ、次の割り当てを待つ）
+  const { maxDownloads } = await loadSettings();
+  if (handedToJd(await readQueue(), sendingNow) >= Math.max(1, maxDownloads)) {
+    await sleep(IDLE_WAIT_MS);
+    return true;
+  }
+  sendingNow++;
+  try {
+    let t = Date.now();
+    let data: any;
+    try {
+      data = await api.shareFileGet(item.shareToken, item.sourceFileId);
+    } catch (e) {
+      // 共有の設定などで直接は取れない（中身付きのエラー）。保存してから取る
+      if (e instanceof LinkexError) {
+        await logEvent('warn', `保存せずには取れなかったため、保存してから取ります: ${item.name} — ${errorText(e)}`);
+        return false;
+      }
+      throw e;
+    }
+    t = lap(item.id, 'URL取得(直接)', t);
+    const file = data?.file ?? data;
+    const url = String(file?.url ?? '');
+    const hash = contentHash(file) ?? item.hash;
+    const fileSize = Number(file?.size);
+    if (!item.force && hash && (await readHashes())[hash]) {
+      await updateItem(item.id, { state: 'skipped', hash, note: '同じ中身をダウンロード済み' });
+      await logEvent('info', `重複のため省略: ${item.name}`);
+      return true;
+    }
+    if (!url) {
+      await logEvent('warn', `保存せずにはURLが出なかったため、保存してから取ります: ${item.name}`);
+      return false;
+    }
+    const jdId = await addDownload(url, { dir: item.relDir, out: item.outName });
+    lap(item.id, 'JD2へ', t);
+    jdDownSince = 0;
+    await updateItem(item.id, {
+      state: 'downloading',
+      hash,
+      jdId,
+      fileSize: Number.isFinite(fileSize) && fileSize > 0 ? fileSize : undefined,
+      note: undefined,
+      error: undefined,
+    });
+    await logEvent('info', `JD2へ渡しました（保存なし）: ${item.relDir}\\${item.outName}`);
+    await logLaps(item);
+    return true;
+  } finally {
+    sendingNow--;
+  }
+}
 
 async function stepCopy(item: QueueItem): Promise<void> {
   if (!item.force && item.hash && (await readHashes())[item.hash]) {
@@ -580,7 +722,37 @@ const progressSavedAt = new Map<string, number>();
  * JD2のダウンロード状況を取り込み、完了・失敗を反映する。
  * キュー全体の書き込みは重く、書くたびに画面も描き直されるので、変更はまとめて1回で書く
  */
-export async function refreshDownloads(): Promise<void> {
+let refreshing: Promise<void> | null = null;
+export function refreshDownloads(): Promise<void> {
+  // 見回り（1分ごと）と指示役が同時に取り込むと、同じ失敗を二重に数えかねないので1本にまとめる
+  refreshing ??= doRefreshDownloads().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+/** ダウンロード中の件の進み具合の合計と、それが最後に増えた時刻 */
+let stall: { bytes: number; since: number; noticed: boolean } | null = null;
+
+/** ダウンロード中の件がどれも長く進まなければ、処理ログと通知で知らせる（1回だけ） */
+async function watchStall(loaded: number, active: number): Promise<void> {
+  if (active === 0) {
+    stall = null;
+    return;
+  }
+  if (!stall || loaded > stall.bytes) {
+    stall = { bytes: loaded, since: Date.now(), noticed: false };
+    return;
+  }
+  stall.bytes = loaded;
+  if (stall.noticed || Date.now() - stall.since < STALL_NOTICE_MS) return;
+  stall.noticed = true;
+  const minutes = STALL_NOTICE_MS / 60_000;
+  await logEvent('warn', `JD2のダウンロードが${minutes}分以上進んでいません（JD2が確認を待っている・止められているなど）`);
+  await notify('stalled', 'ダウンロードが進んでいません', `JD2で${minutes}分以上進んでいません。JD2の画面を確認してください`);
+}
+
+async function doRefreshDownloads(): Promise<void> {
   const items = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId);
   if (items.length === 0) return;
   let links: Awaited<ReturnType<typeof queryLinks>>;
@@ -591,6 +763,11 @@ export async function refreshDownloads(): Promise<void> {
     return; // JD2に一時的につながらない場合は次回また確認
   }
   const byId = new Map(links.map((l) => [String(l.uuid), l]));
+  const stillActive = items.filter((i) => jdLinkState(byId.get(i.jdId!), i.fileSize ?? null) === 'active');
+  await watchStall(
+    stillActive.reduce((sum, i) => sum + (byId.get(i.jdId!)?.bytesLoaded ?? 0), 0),
+    stillActive.length,
+  );
   const patches = new Map<string, Partial<QueueItem>>();
   const logs: [Parameters<typeof logEvent>[0], string][] = [];
   // JD2があきらめたリンク。保存し直して新しいURLで渡すので、落としかけのファイルごとJD2の一覧から消す

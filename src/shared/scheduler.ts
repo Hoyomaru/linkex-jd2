@@ -92,3 +92,10 @@ export function findOwnCopy<T extends DriveFile>(fresh: T[], item: QueueItem, cl
   const exact = sameName.filter((f) => item.size === null || Number(f.size) === item.size);
   return exact[0] ?? (sameName.length === 1 ? sameName[0] : undefined);
 }
+
+/**
+ * 自分のストレージに残ったコピー（片付けの対象）を選ぶ。フォルダと、キューの件のコピーとして決まっているものは除く
+ */
+export function pickLeftovers<T extends { id: unknown }>(files: T[], claimed: Set<string>, isFolder: (f: T) => boolean): T[] {
+  return files.filter((f) => f.id !== undefined && f.id !== null && !isFolder(f) && !claimed.has(String(f.id)));
+}

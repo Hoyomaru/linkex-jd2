@@ -108,8 +108,15 @@ export async function clearHashes(): Promise<void> {
   await chrome.storage.local.remove(HASHES_KEY);
 }
 
-export async function rememberHash(hash: string, name: string): Promise<void> {
-  const hashes = await readHashes();
-  hashes[hash] = { name, at: Date.now() };
-  await chrome.storage.local.set({ [HASHES_KEY]: hashes });
+// ダウンロード済みの記録の書き換えも1本にまとめる（同時に書くと片方の記録が消えるため）
+let hashLock: Promise<unknown> = Promise.resolve();
+export function rememberHash(hash: string, name: string): Promise<void> {
+  const run = async () => {
+    const hashes = await readHashes();
+    hashes[hash] = { name, at: Date.now() };
+    await chrome.storage.local.set({ [HASHES_KEY]: hashes });
+  };
+  const next = hashLock.then(run, run);
+  hashLock = next.catch(() => undefined);
+  return next;
 }
