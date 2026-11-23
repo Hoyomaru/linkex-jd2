@@ -253,7 +253,7 @@ async function cleanupLeftovers(items: QueueItem[]): Promise<number> {
 async function storageBudget(): Promise<number> {
   try {
     const usage = await api.usage();
-    if (usage.totalSpace > 0) return Math.min(STORAGE_CAP_BYTES, Math.max(0, usage.totalSpace - usage.usedSpace));
+    if (usage.totalSpace > 0) return Math.min(STORAGE_CAP_BYTES, Math.max(0, usage.totalSpace - (usage.usedSpace ?? 0)));
   } catch {
     // 調べられなければ上限だけで進める（足りなければLinkexが容量不足と返す）
   }

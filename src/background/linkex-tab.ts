@@ -34,14 +34,42 @@ export class LinkexLoginError extends Error {
   }
 }
 
-async function waitForComplete(tabId: number, timeoutMs = 30_000): Promise<void> {
+/**
+ * タブが使えるようになるのを待つ。
+ * ページ全体の読み込み完了（tab.status === 'complete'）は、画像や計測用の通信が1つでも返ってこないと
+ * いつまでも来ない（広告ブロッカーや、Edgeが裏のタブの読み込みを後回しにしたときなど）。
+ * 使うのはページの通信部品だけなので、ページの中身ができて部品のスクリプトがあれば、使えるとみなす
+ */
+async function waitForComplete(tabId: number, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
     if (tab.status === 'complete') return;
+    if (isDrive(tab.url) && (await pageReady(tabId))) return;
     await sleep(300);
   }
   throw new Error('Linkexのページの読み込みが終わりませんでした');
+}
+
+/** ページの中身ができていて、通信部品のスクリプトが読み込まれているか（確かめられなければ false） */
+async function pageReady(tabId: number): Promise<boolean> {
+  try {
+    const [injection] = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: () =>
+          document.readyState !== 'loading' &&
+          performance
+            .getEntriesByType('resource')
+            .some((e) => /\/drive\/assets\/js\/index-[^/]+\.js(\?.*)?$/.test(e.name) && (e as PerformanceResourceTiming).responseEnd > 0),
+      }),
+      2_000,
+    );
+    return injection?.result === true;
+  } catch {
+    return false;
+  }
 }
 
 /** 時間内に終わらなければ失敗にする（凍結したタブへの命令は、起きるまで返ってこないため） */
@@ -104,7 +132,7 @@ export async function ensureLinkexTab(): Promise<number> {
   // 前回使ったタブがそのまま使えるなら、確認を最小限にして返す
   if (cachedTabId !== null) {
     const tab = await chrome.tabs.get(cachedTabId).catch(() => undefined);
-    if (tab?.id !== undefined && isDrive(tab.url) && tab.status === 'complete') {
+    if (tab?.id !== undefined && isDrive(tab.url) && (tab.status === 'complete' || (await pageReady(tab.id)))) {
       if (await wakeIfAsleep(tab)) {
         const woke = await chrome.tabs.get(tab.id);
         if (!isDrive(woke.url)) throw new LinkexLoginError(`タブが ${pagePath(woke.url)} に移りました`);
