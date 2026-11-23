@@ -1,5 +1,6 @@
 import { send } from '../shared/messages';
 import { formatBytes, isFolder, linkexApi, unwrapFile } from '../shared/linkex-api';
+import type { JdInfo } from '../background/jd2';
 import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
@@ -123,9 +124,17 @@ action($('jd-test'), async () => {
   el.textContent = '確認中…';
   el.className = 'muted';
   // 入力中（未保存）の設定ではなく、保存済みの設定で試す
-  const res = await send<number>({ type: 'jd.version' });
+  const res = await send<JdInfo>({ type: 'jd.info' });
   if (res.ok) {
-    el.textContent = `接続OK（JD2 ビルド ${res.data}）`;
+    const j = res.data;
+    const num = (n: number | null) => (n === null ? '?' : String(n));
+    const perHost = j.perHostEnabled === false ? '制限なし' : num(j.perHost);
+    el.textContent =
+      `接続OK（JD2 ビルド ${j.version}）・JD2の設定: 同時ダウンロード ${num(j.maxDownloads)}・同じホストから ${perHost}・1ファイルの分割数 ${num(j.chunks)}`;
+    // Linkexのファイルはすべて同じCDNから来るので、同じホストからの数が1だと1件ずつしか落ちない
+    if (j.perHostEnabled !== false && j.perHost === 1) {
+      el.textContent += '。同じホストからの数が1なので、1件ずつ落とします（JD2の「設定 → 一般」で変えられます）';
+    }
     el.className = 'ok';
   } else {
     el.textContent = res.error;
@@ -144,6 +153,7 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('apiIntervalMs') as HTMLInputElement).value = String(s.apiIntervalMs);
   (form.elements.namedItem('maxDownloads') as HTMLInputElement).value = String(s.maxDownloads);
   (form.elements.namedItem('parallelItems') as HTMLInputElement).value = String(s.parallelItems);
+  (form.elements.namedItem('prefetchItems') as HTMLInputElement).value = String(s.prefetchItems);
   (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
   (form.elements.namedItem('autoStartOnAdd') as HTMLInputElement).checked = s.autoStartOnAdd;
@@ -157,6 +167,7 @@ form.addEventListener('submit', async (ev) => {
     apiIntervalMs: Math.max(0, Number(v('apiIntervalMs').value) || 0),
     maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
     parallelItems: Math.min(6, Math.max(1, Number(v('parallelItems').value) || 1)),
+    prefetchItems: Math.min(3, Math.max(0, Math.floor(Number(v('prefetchItems').value) || 0))),
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     notifications: v('notifications').checked,
     autoStartOnAdd: v('autoStartOnAdd').checked,

@@ -138,8 +138,9 @@
             <div class="fields">
               <label>JD2に渡しておく数<input type="number" name="maxDownloads" min="1" max="16" title="URLには期限があるので、JD2の中で長く待たせないよう、渡すのはこの数まで。実際に同時に落とす数はJD2の設定に従う" /></label>
               <label>同時に処理する数（Linkex側の保存〜削除）<input type="number" name="parallelItems" min="1" max="6" /></label>
+              <label>先に保存しておく数<input type="number" name="prefetchItems" min="0" max="3" title="JD2が空くのを待つあいだに、次の件の保存まで済ませておく数。空きができたらすぐJD2に渡せる。保存したコピーは容量を使う（5GBと空き容量の枠の中）" /></label>
               <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
-              <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き。オフにすると1件ごとの転送量の確認を省くので、少し速くなる）</label>
+              <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き。転送量の確認は1分に1回まで。オフにすると確認も省く）</label>
               <label class="check full"><input type="checkbox" name="notifications" /> すべて終わったとき・止まったときにWindowsの通知を出す</label>
               <label class="check full"><input type="checkbox" name="autoStartOnAdd" /> 右クリックで追加したら、すぐ開始する</label>
             </div>

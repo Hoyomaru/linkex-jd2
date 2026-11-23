@@ -28,9 +28,38 @@ export async function getVersion(): Promise<number> {
   return jd<number>('jd/version');
 }
 
-/** JD2の既定の保存先フォルダ */
+const GENERAL = 'org.jdownloader.settings.GeneralSettings';
+
+/** JD2の既定の保存先フォルダ。1件ごとに聞かないよう、しばらく覚えておく */
+let folderCache: { jdUrl: string; folder: string; at: number } | null = null;
+const FOLDER_CACHE_MS = 60_000;
 async function defaultFolder(): Promise<string> {
-  return jd<string>('config/get', 'org.jdownloader.settings.GeneralSettings', null, 'DefaultDownloadFolder');
+  const { jdUrl } = await loadSettings();
+  if (folderCache && folderCache.jdUrl === jdUrl && Date.now() - folderCache.at < FOLDER_CACHE_MS) return folderCache.folder;
+  const folder = await jd<string>('config/get', GENERAL, null, 'DefaultDownloadFolder');
+  folderCache = { jdUrl, folder, at: Date.now() };
+  return folder;
+}
+
+/** 接続テストで見せる、JD2の同時ダウンロードの設定（読めなかった項目は null） */
+export interface JdInfo {
+  version: number;
+  maxDownloads: number | null;
+  perHostEnabled: boolean | null;
+  perHost: number | null;
+  chunks: number | null;
+}
+
+export async function getInfo(): Promise<JdInfo> {
+  const version = await getVersion();
+  const read = <T>(key: string) => jd<T>('config/get', GENERAL, null, key).catch(() => null);
+  const [maxDownloads, perHostEnabled, perHost, chunks] = await Promise.all([
+    read<number>('MaxSimultaneDownloads'),
+    read<boolean>('MaxDownloadsPerHostEnabled'),
+    read<number>('MaxSimultaneDownloadsPerHost'),
+    read<number>('MaxChunksPerFile'),
+  ]);
+  return { version, maxDownloads, perHostEnabled, perHost, chunks };
 }
 
 /** リンクの読み取り（JD2が URL を確かめる）を待つ上限 */

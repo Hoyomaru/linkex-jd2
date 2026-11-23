@@ -5,6 +5,7 @@ export type Request =
   | { type: 'linkex.call'; method: 'get' | 'post'; path: string; params?: unknown; data?: unknown }
   | { type: 'linkex.openTab' }
   | { type: 'jd.version' }
+  | { type: 'jd.info' }
   | { type: 'jd.add'; url: string; dir?: string; out?: string }
   | { type: 'jd.active' }
   | { type: 'cdn.probe'; url: string }

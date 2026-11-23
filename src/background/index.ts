@@ -4,7 +4,7 @@ import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, refreshDownloads, start } from './engine';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
-import { addDownload, getVersion, queryLinks, totalSpeed } from './jd2';
+import { addDownload, getInfo, getVersion, queryLinks, totalSpeed } from './jd2';
 import { clearEvents, clearHashes, mutateQueue, readEngine, readQueue } from './store';
 import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
@@ -89,6 +89,8 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
     }
     case 'jd.version':
       return getVersion();
+    case 'jd.info':
+      return getInfo();
     case 'jd.add':
       return addDownload(req.url, { dir: req.dir, out: req.out });
     case 'jd.active': {

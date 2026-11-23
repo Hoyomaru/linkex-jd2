@@ -11,6 +11,8 @@ export interface Settings {
   maxDownloads: number;
   /** Linkex側の保存〜削除を同時に進める数（APIを同時に呼ぶ数も同じ） */
   parallelItems: number;
+  /** JD2の空き待ちのあいだに、先に保存しておく数（先読み）。0 なら空きができてから保存する */
+  prefetchItems: number;
   /** すべて終わったとき・止まったときにWindowsの通知を出す */
   notifications: boolean;
   /** 右クリックやページ内のリンク収集で追加したら、すぐ開始する */
@@ -24,6 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pauseOnTrafficLimit: true,
   maxDownloads: 3,
   parallelItems: 3,
+  prefetchItems: 1,
   notifications: true,
   autoStartOnAdd: true,
 };

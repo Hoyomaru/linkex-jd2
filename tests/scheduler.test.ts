@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findOwnCopy, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
+import { findOwnCopy, handedToJd, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -167,4 +167,22 @@ test('サイズの合うものが複数あれば、いちばん新しく作ら�
   const target = item({ name: 'a.mp4', size: 100 });
   const found = findOwnCopy([file('old', 'a.mp4', 100, 1), file('new', 'a.mp4', 100, 2)], target, new Set());
   assert.equal(found?.id, 'new');
+});
+
+test('先読みの数だけ、JD2に渡しておく数を超えて保存を始める', () => {
+  const items = [item({ state: 'downloading' }), item({ state: 'downloading' }), item(), item(), item()];
+  assert.deepEqual(pickStarts(items, ctx({ maxDownloads: 2 })), []);
+  assert.deepEqual(pickStarts(items, ctx({ maxDownloads: 2, prefetch: 1 })), [items[2].id]);
+  assert.deepEqual(pickStarts(items, ctx({ maxDownloads: 2, prefetch: 2 })), [items[2].id, items[3].id]);
+});
+
+test('JD2に渡し済みの数には、渡した後の削除中の件と渡している最中の件を数える', () => {
+  const items = [
+    item({ state: 'downloading' }),
+    item({ state: 'deleting', jdId: '1' }),
+    item({ state: 'deleting' }),
+    item({ state: 'copied' }),
+  ];
+  assert.equal(handedToJd(items, 0), 2);
+  assert.equal(handedToJd(items, 1), 3);
 });

@@ -13,6 +13,11 @@ export interface PickContext {
   budgetBytes: number;
   /** JD2に渡しておく数（保存中の件も、すぐJD2に回るので数に入れる） */
   maxDownloads: number;
+  /**
+   * JD2の空き待ちのあいだに、先に保存しておく数（先読み）。
+   * 保存まで済ませておき、JD2に空きができたらすぐURLを発行して渡す。省略時は 0
+   */
+  prefetch?: number;
   /** false なら新しい件は始めず、途中の件の再開だけをする（容量の空き待ちなど） */
   allowNew: boolean;
 }
@@ -41,7 +46,7 @@ export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
   const names = new Set(prep.map((i) => i.name));
 
   for (const i of items) {
-    if (slots <= 0 || downloads >= ctx.maxDownloads || unknownBusy) break;
+    if (slots <= 0 || downloads >= ctx.maxDownloads + (ctx.prefetch ?? 0) || unknownBusy) break;
     if (!WAITING_STATES.includes(i.state) || ctx.running.has(i.id)) continue;
     if (names.has(i.name)) continue;
     if (i.size === null) {
@@ -58,6 +63,14 @@ export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
     downloads++;
   }
   return starts;
+}
+
+/**
+ * JD2に渡し済み（または渡している最中）の数。これが「JD2に渡しておく数」に届いていたら、
+ * 先読みで保存した件はJD2に渡さずに待つ
+ */
+export function handedToJd(items: QueueItem[], sendingNow: number): number {
+  return items.filter((i) => i.state === 'downloading' || (i.state === 'deleting' && i.jdId)).length + sendingNow;
 }
 
 export interface DriveFile {

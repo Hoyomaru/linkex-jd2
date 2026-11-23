@@ -1,6 +1,6 @@
 import { contentHash, formatBytes, unwrapFile } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
-import { findOwnCopy, PREP_STATES, pickStarts } from '../shared/scheduler';
+import { findOwnCopy, handedToJd, PREP_STATES, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
@@ -17,6 +17,12 @@ const COPY_FIND_MS = 60_000;
 /** ダウンロードの空き待ち。JD2への確認はPCの中で済み軽いので、短めに見る */
 const IDLE_WAIT_MS = 1_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
+/** 転送量を調べ直すまでの間（その間は、調べた残りから始めた件のサイズを引いて見込む） */
+const TRAFFIC_CACHE_MS = 60_000;
+/** 保存前の一覧として、ほかの件が少し前に取り始めた一覧を使ってよい時間 */
+const BEFORE_LIST_REUSE_MS = 2_000;
+/** 先読みで保存した件に付けるメモ */
+const PREFETCHED_NOTE = '保存済み（JD2の空き待ち）';
 const CAPACITY_WAIT_MS = 30_000;
 /** JD2 にこの時間つながらないままなら、全体を止めて知らせる */
 const JD_DOWN_LIMIT_MS = 3 * 60_000;
@@ -46,6 +52,10 @@ const DOWNLOADS_REFRESH_MS = 3_000;
 let jdDownSince = 0;
 /** 保存中のコピーに使ってよい容量（バイト） */
 let budget: { bytes: number; at: number } | null = null;
+/** 転送量の残りの見込み（バイト）。調べた時刻から TRAFFIC_CACHE_MS の間だけ使う */
+let trafficLeft: { bytes: number; at: number } | null = null;
+/** いまJD2に渡している最中の件の数（先読みした件を渡しすぎないように数える） */
+let sendingNow = 0;
 
 /** キューを処理するループを起動する（すでに動いていれば何もしない） */
 export function kick(): void {
@@ -72,6 +82,7 @@ export async function start(): Promise<void> {
   jdDownSince = 0;
   trafficWaitUntil = 0;
   budget = null;
+  trafficLeft = null;
   await logEvent('info', '処理を開始しました');
   kick();
 }
@@ -121,10 +132,12 @@ async function runLoop(): Promise<void> {
       parallel: Math.max(1, settings.parallelItems),
       budgetBytes: budget.bytes,
       maxDownloads: settings.maxDownloads,
+      prefetch: Math.max(0, settings.prefetchItems),
     };
     let picks = pickStarts(items, { ...ctx, allowNew: Date.now() >= capacityWaitUntil && Date.now() >= trafficWaitUntil });
-    const startsNew = picks.some((id) => waiting.some((w) => w.id === id));
-    if (startsNew && settings.pauseOnTrafficLimit && (await trafficExhausted())) {
+    const newPicks = waiting.filter((w) => picks.includes(w.id));
+    const newBytes = newPicks.reduce((sum, w) => sum + (w.size ?? 0), 0);
+    if (newPicks.length > 0 && settings.pauseOnTrafficLimit && (await trafficExhausted(newBytes))) {
       // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、
       // ログは待機に入った最初の1回だけ書く
       if (engine.message !== TRAFFIC_WAIT_MESSAGE) {
@@ -200,12 +213,24 @@ async function runWorker(id: string): Promise<void> {
   }
 }
 
-async function trafficExhausted(): Promise<boolean> {
+/**
+ * 転送量の上限に達しているか。1件ごとには調べず、調べた残りから始めた件のサイズを引いて見込み、
+ * 見込みが尽きたときか、前に調べてから TRAFFIC_CACHE_MS たったときだけ調べ直す
+ */
+async function trafficExhausted(startBytes: number): Promise<boolean> {
+  if (trafficLeft && Date.now() - trafficLeft.at < TRAFFIC_CACHE_MS && trafficLeft.bytes > startBytes) {
+    trafficLeft.bytes -= startBytes;
+    return false;
+  }
   try {
     const t = await api.traffic();
-    if (t.usedTraffic < 0) return false; // 上限なし扱いのアカウント
-    return t.totalTraffic > 0 && t.usedTraffic >= t.totalTraffic;
+    // 上限なし扱いのアカウント（usedTraffic が負）や、上限が分からないときは尽きない扱い
+    const limited = t.usedTraffic >= 0 && t.totalTraffic > 0;
+    const left = limited ? t.totalTraffic - t.usedTraffic : Infinity;
+    trafficLeft = { bytes: left - startBytes, at: Date.now() };
+    return limited && left <= 0;
   } catch {
+    trafficLeft = null;
     return false;
   }
 }
@@ -326,16 +351,42 @@ async function logLaps(item: QueueItem): Promise<void> {
   await logEvent('info', `内訳（秒）: 計 ${(total / 1000).toFixed(1)}・${parts} — ${item.name}`);
 }
 
-/** 自分のファイル（ルート）のID一覧 */
-async function listRootIds(): Promise<Map<string, any>> {
-  const list = await collectPages((page) => api.rootFiles(page));
-  const map = new Map<string, any>();
-  for (const item of list) {
-    const f = unwrapFile(item);
-    if (f?.id) map.set(String(f.id), f);
-  }
-  return map;
+interface RootListing {
+  /** 取り始めた時刻 */
+  since: number;
+  files: Promise<Map<string, any>>;
 }
+let rootListing: RootListing | null = null;
+
+/**
+ * 自分のファイル（ルート）の一覧。notBefore 以降に取り始めた一覧を返す。
+ * 同時に進めているほかの件が条件に合う一覧を取っている最中・取り終えたところなら、それを分け合う
+ * （件ごとに全ページを取り直すと、同時に処理する数だけ同じ一覧を取ることになるため）
+ */
+function listRoot(notBefore: number): RootListing {
+  if (rootListing && rootListing.since >= notBefore) return rootListing;
+  const listing: RootListing = {
+    since: Date.now(),
+    files: (async () => {
+      const list = await collectPages((page) => api.rootFiles(page));
+      const map = new Map<string, any>();
+      for (const item of list) {
+        const f = unwrapFile(item);
+        if (f?.id) map.set(String(f.id), f);
+      }
+      return map;
+    })(),
+  };
+  rootListing = listing;
+  // 失敗した一覧はほかの件に使わせない
+  listing.files.catch(() => {
+    if (rootListing === listing) rootListing = null;
+  });
+  return listing;
+}
+
+/** 件ごとに、コピー探しで最後に見た一覧を取り始めた時刻（同じ一覧を何度も見ないため） */
+const findListedAt = new Map<string, number>();
 
 async function stepCopy(item: QueueItem): Promise<void> {
   if (!item.force && item.hash && (await readHashes())[item.hash]) {
@@ -344,7 +395,9 @@ async function stepCopy(item: QueueItem): Promise<void> {
     return;
   }
   let t = Date.now();
-  const before = await listRootIds();
+  // 保存（file/copy）を頼む前に取り終えた一覧なら、保存前の一覧として使える。
+  // 取り始めがほんの少し前の、ほかの件の一覧も使う（同じ名前の件は同時に保存しないので取り違えない）
+  const before = await listRoot(Date.now() - BEFORE_LIST_REUSE_MS).files;
   t = lap(item.id, `保存前の一覧(${before.size}件)`, t);
   await updateItem(item.id, {
     state: 'copying',
@@ -397,7 +450,11 @@ async function waitTask(taskId: string): Promise<void> {
 async function stepFindCopy(item: QueueItem): Promise<void> {
   const t = Date.now();
   const before = new Set(item.beforeIds ?? []);
-  const now = await listRootIds();
+  // 保存が終わった後に取り始めた一覧だけを見る（前の周回で見た一覧より新しいもの）
+  const notBefore = Math.max(item.copiedAt ?? item.copyStartedAt ?? 0, (findListedAt.get(item.id) ?? -1) + 1);
+  const listing = listRoot(notBefore);
+  findListedAt.set(item.id, listing.since);
+  const now = await listing.files;
   lap(item.id, 'コピー探し', t);
   const fresh = [...now.entries()].filter(([id]) => !before.has(id)).map(([, f]) => f);
   const sizeOf = (f: any) => Number(f.size);
@@ -417,6 +474,7 @@ async function stepFindCopy(item: QueueItem): Promise<void> {
       `保存したはずのファイルが見つかりません（新しく増えたファイル ${fresh.length}件${seen ? `: ${seen}` : ''}）`,
     );
   }
+  findListedAt.delete(item.id);
   await updateItem(item.id, { state: 'copied', destFileId: String(found.id) });
 }
 
@@ -428,8 +486,25 @@ async function claimedByOthers(id: string): Promise<Set<string>> {
 
 async function stepSend(item: QueueItem): Promise<void> {
   if (!item.destFileId) throw new Error('コピーのIDがありません');
+  // 先読みで保存した件は、JD2に渡しておく数に空きができるまで待つ（URLには期限があるので、URLは渡す直前に発行する）
+  const { maxDownloads } = await loadSettings();
+  const items = await readQueue();
+  if (handedToJd(items, sendingNow) >= Math.max(1, maxDownloads)) {
+    if (item.note !== PREFETCHED_NOTE) await updateItem(item.id, { note: PREFETCHED_NOTE });
+    await sleep(IDLE_WAIT_MS);
+    return;
+  }
+  sendingNow++;
+  try {
+    await sendToJd(item);
+  } finally {
+    sendingNow--;
+  }
+}
+
+async function sendToJd(item: QueueItem): Promise<void> {
   let t = Date.now();
-  const data = await api.fileGet(item.destFileId);
+  const data = await api.fileGet(item.destFileId!);
   t = lap(item.id, 'URL取得', t);
   const file = data?.file ?? data;
   const url = String(file?.url ?? '');
