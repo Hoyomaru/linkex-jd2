@@ -57,7 +57,7 @@ async function addUrls(text: string, button: HTMLButtonElement, label: string): 
     const parts = [r.added ? `${r.added}件（${formatBytes(r.addedBytes)}）を追加` : '追加はありません'];
     if (r.alreadyQueued) parts.push(`すでにあった ${r.alreadyQueued}件`);
     if (r.invalid.length) parts.push(`読めなかったURL ${r.invalid.length}件`);
-    if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件`);
+    if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件（${r.failed[0].error}）`);
     if (r.added > 0 && $<HTMLInputElement>('autostart').checked && engine?.paused !== false) {
       const started = await send({ type: 'queue.start' });
       parts.push(started.ok ? '開始しました' : `開始できませんでした: ${started.error}`);

@@ -22,14 +22,21 @@ $('log-clear').addEventListener('click', (ev) => {
   if (secondPress(ev.currentTarget as HTMLButtonElement, 'もう一度押すと消します')) $('log').textContent = '';
 });
 
-/** ボタンを押している間は無効にして、例外はログに出す */
+/** 失敗を、確認用タブのログと、どのタブからも見える画面上部のお知らせに出す */
+function showError(e: unknown) {
+  const message = String((e as Error)?.message ?? e);
+  log(`エラー: ${message}`);
+  queueView.showNotice(`うまくいきませんでした: ${message}`);
+}
+
+/** ボタンを押している間は無効にして、例外は画面とログに出す */
 function action(button: HTMLButtonElement, fn: () => Promise<void>) {
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
       await fn();
     } catch (e) {
-      log(`エラー: ${(e as Error).message}`);
+      showError(e);
     } finally {
       button.disabled = false;
     }
@@ -123,7 +130,8 @@ action($('jd-test'), async () => {
   const el = $('jd-status');
   el.textContent = '確認中…';
   el.className = 'muted';
-  // 入力中（未保存）の設定ではなく、保存済みの設定で試す
+  // 入力中（未保存）の設定ではなく、保存済みの設定で試す。書き換えて保存していなければ、そう添える
+  const unsaved = formDirty ? '（保存済みの設定で試しました。変えた接続先は「保存」を押すと使われます）' : '';
   const res = await send<JdInfo>({ type: 'jd.info' });
   if (res.ok) {
     const j = res.data;
@@ -135,15 +143,32 @@ action($('jd-test'), async () => {
     if (j.perHostEnabled !== false && j.perHost === 1) {
       el.textContent += '。同じホストからの数が1なので、1件ずつ落とします（JD2の「設定 → 一般」で変えられます）';
     }
+    el.textContent += unsaved;
     el.className = 'ok';
   } else {
-    el.textContent = res.error;
+    el.textContent = res.error + unsaved;
     el.className = 'ng';
   }
 });
 
 // ---------- 設定 ----------
 const form = $<HTMLFormElement>('settings');
+/** 読み込んだ後・保存した後に、書き換えたものがあるか */
+let formDirty = false;
+form.addEventListener('input', () => (formDirty = true));
+
+/** 範囲の外の数値は丸めて保存するので、丸めたことを知らせる */
+function clampField(form: HTMLFormElement, name: string, label: string, min: number, max: number, adjusted: string[]): number {
+  const input = form.elements.namedItem(name) as HTMLInputElement;
+  const raw = Number(input.value);
+  const value = Math.min(max, Math.max(min, Math.floor(Number.isFinite(raw) ? raw : min)));
+  if (String(value) !== input.value.trim()) {
+    adjusted.push(`${label}を${value}に`);
+    input.value = String(value);
+  }
+  return value;
+}
+
 async function loadSettingsIntoForm() {
   const res = await send<Settings>({ type: 'settings.get' });
   if (!res.ok) return log(`設定の読み込みに失敗: ${res.error}`);
@@ -160,29 +185,42 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('cleanupLeftovers') as HTMLInputElement).checked = s.cleanupLeftovers;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
   (form.elements.namedItem('autoStartOnAdd') as HTMLInputElement).checked = s.autoStartOnAdd;
+  formDirty = false;
 }
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const v = (name: string) => (form.elements.namedItem(name) as HTMLInputElement);
+  const adjusted: string[] = [];
   const patch: Partial<Settings> = {
     jdUrl: v('jdUrl').value.trim(),
     downloadDir: v('downloadDir').value.trim(),
-    apiIntervalMs: Math.max(0, Number(v('apiIntervalMs').value) || 0),
-    maxDownloads: Math.min(16, Math.max(1, Number(v('maxDownloads').value) || 1)),
-    parallelItems: Math.min(6, Math.max(1, Number(v('parallelItems').value) || 1)),
+    apiIntervalMs: clampField(form, 'apiIntervalMs', 'APIを呼ぶ間隔', 0, Number.MAX_SAFE_INTEGER, adjusted),
+    maxDownloads: clampField(form, 'maxDownloads', 'JD2に渡しておく数', 1, 16, adjusted),
+    parallelItems: clampField(form, 'parallelItems', '同時に処理する数', 1, 6, adjusted),
     directDownload: v('directDownload').checked,
     forceStart: v('forceStart').checked,
-    prefetchItems: Math.min(3, Math.max(0, Math.floor(Number(v('prefetchItems').value) || 0))),
+    prefetchItems: clampField(form, 'prefetchItems', '先に保存しておく数', 0, 3, adjusted),
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     cleanupLeftovers: v('cleanupLeftovers').checked,
     notifications: v('notifications').checked,
     autoStartOnAdd: v('autoStartOnAdd').checked,
   };
   const res = await send({ type: 'settings.set', patch });
-  $('settings-saved').textContent = res.ok ? '保存しました' : `保存に失敗: ${res.error}`;
-  $('settings-saved').className = res.ok ? 'ok' : 'ng';
-  setTimeout(() => ($('settings-saved').textContent = ''), 3000);
+  const saved = $('settings-saved');
+  clearTimeout(savedTimer);
+  if (res.ok) {
+    formDirty = false;
+    saved.textContent = adjusted.length ? `保存しました（範囲の外だったので、${adjusted.join('・')}直しました）` : '保存しました';
+    saved.className = 'ok';
+    // 丸めたことは読めるよう残し、うまくいっただけのときは少しで消す
+    if (!adjusted.length) savedTimer = setTimeout(() => (saved.textContent = ''), 3000);
+  } else {
+    // 失敗は、読めるよう消さずに残す
+    saved.textContent = `保存に失敗: ${res.error}`;
+    saved.className = 'ng';
+  }
 });
+let savedTimer: ReturnType<typeof setTimeout> | undefined;
 
 // ---------- 1. 共有リンクの中身 ----------
 async function showShare(token: string, trail: { id?: string; name: string }[]) {
@@ -362,7 +400,7 @@ $('hashes-clear').addEventListener('click', async (ev) => {
     if (!res.ok) throw new Error(res.error);
     log('ダウンロード済みの記録を消しました');
   } catch (e) {
-    log(`エラー: ${(e as Error).message}`);
+    showError(e);
   } finally {
     button.disabled = false;
   }

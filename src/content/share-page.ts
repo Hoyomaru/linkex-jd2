@@ -17,6 +17,7 @@ import {
 import { parseShareToken } from '../shared/share-url';
 import { matchesQuery, singleTopFolder } from '../shared/files';
 import { engineView } from '../ui/live';
+import { describeError } from '../shared/error-text';
 
 interface WalkProgress {
   phase?: 'tab';
@@ -33,11 +34,16 @@ interface WalkedFile {
   folders: string[];
 }
 
+/** 画面に返すエラーは、内部の印のままにせず、原因と対処がわかる文にする */
 function send<T>(message: unknown): Promise<Response<T>> {
   return chrome.runtime
     .sendMessage(message)
-    .then((res) => (res as Response<T> | undefined) ?? { ok: false as const, error: 'no_response' })
-    .catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
+    .then((raw): Response<T> => {
+      const res = raw as Response<T> | undefined;
+      if (!res) return { ok: false, error: describeError('no_response') };
+      return res.ok ? res : { ...res, error: describeError(res.error) };
+    })
+    .catch((e) => ({ ok: false as const, error: describeError(String(e?.message ?? e)) }));
 }
 
 const LOGO = `<svg viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="lm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2ab880"/><stop offset="1" stop-color="#168258"/></linearGradient></defs><rect width="128" height="128" rx="28" fill="url(#lm-g)"/><g fill="#fff"><rect x="54" y="20" width="20" height="46"/><polygon points="30,58 98,58 64,94"/><rect x="28" y="100" width="72" height="12" rx="6"/></g></svg>`;
@@ -256,11 +262,14 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const afterAdd = async (added: number, addedBytes: number, already: number) => {
     let text = `${added}件（${formatBytes(addedBytes)}）をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
     if (added === 0 && already > 0) text = `すべてキューに入っています（${already}件）`;
+    let ok = true;
     if (autostart.checked && added > 0) {
       const res = await send({ type: 'queue.start' });
       text += res.ok ? '。処理を開始しました' : `。開始できませんでした: ${res.error}`;
+      ok = res.ok;
     }
-    setStatus(text, 'ok');
+    // 追加はできても、開始できなかったら気づけるよう赤で出す
+    setStatus(text, ok ? 'ok' : 'ng');
   };
 
   // ---------- 小さくする（状態は覚えておく） ----------

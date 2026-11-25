@@ -137,7 +137,7 @@
             <h2>動作</h2>
             <div class="fields">
               <label>JD2に渡しておく数<input type="number" name="maxDownloads" min="1" max="16" title="URLには期限があるので、JD2の中で長く待たせないよう、渡すのはこの数まで。実際に同時に落とす数はJD2の設定に従う" /></label>
-              <label>同時に処理する数（Linkex側の保存〜削除）<input type="number" name="parallelItems" min="1" max="6" /></label>
+              <label>同時に処理する数（Linkex側）<input type="number" name="parallelItems" min="1" max="6" title="LinkexのAPIを同時に呼ぶ数の上限。保存せずに取るときはURLの発行を、保存してから取るときは保存〜削除を、この数まで同時に進める" /></label>
               <label>先に保存しておく数<input type="number" name="prefetchItems" min="0" max="3" title="JD2が空くのを待つあいだに、次の件の保存まで済ませておく数。空きができたらすぐJD2に渡せる。保存したコピーは容量を使う（5GBと空き容量の枠の中）" /></label>
               <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
               <label class="check full"><input type="checkbox" name="forceStart" /> JD2に渡した件を「強制ダウンロード開始」にする（JD2の同時ダウンロード数の設定を超えて、「JD2に渡しておく数」まで同時に落とす。JD2をほかの用途と共用していて、JD2の設定を変えたくないとき向け）</label>

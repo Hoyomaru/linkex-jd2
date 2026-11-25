@@ -1,3 +1,4 @@
+import { describeError } from './error-text';
 import type { Settings } from './settings';
 
 /** 画面（専用ページ・ポップアップ）から Service Worker へ送るメッセージ */
@@ -34,12 +35,14 @@ export type Request =
 
 export type Response<T = unknown> = { ok: true; data: T } | { ok: false; error: string; detail?: unknown };
 
+/** 画面に返すエラーは、内部の印のままにせず、原因と対処がわかる文にする */
 export async function send<T = unknown>(request: Request): Promise<Response<T>> {
   try {
     const res = (await chrome.runtime.sendMessage(request)) as Response<T> | undefined;
-    return res ?? { ok: false, error: 'no_response' };
+    if (!res) return { ok: false, error: describeError('no_response') };
+    return res.ok ? res : { ...res, error: describeError(res.error) };
   } catch (e) {
-    return { ok: false, error: String((e as Error)?.message ?? e) };
+    return { ok: false, error: describeError(String((e as Error)?.message ?? e)) };
   }
 }
 

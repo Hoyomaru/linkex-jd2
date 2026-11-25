@@ -1,4 +1,5 @@
 import { judgeLogin } from '../shared/auth';
+import { describeError } from '../shared/error-text';
 import { isTransientLinkexFailure, mayRetryLinkex } from '../shared/linkex-transient';
 import { callLinkex, LinkexLoginError } from './linkex-tab';
 
@@ -46,7 +47,7 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
     }
     const detail = res.detail as any;
     const code = Number(detail?.code ?? NaN);
-    throw new LinkexError(`${path}: ${res.error}`, Number.isFinite(code) ? code : null, detail);
+    throw new LinkexError(`${path}: ${describeError(res.error)}`, Number.isFinite(code) ? code : null, detail);
   }
   const env = res.data as { code?: number; message?: string; data?: T } | null;
   if (env && typeof env === 'object' && 'code' in env && env.code !== 0) {

@@ -1,3 +1,4 @@
+import { describeError } from '../shared/error-text';
 import { relDirFor, sanitizeName, singleTopFolder, withNumber } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
 import { parseShareTokens } from '../shared/share-url';
@@ -43,7 +44,7 @@ export async function enqueueShares(text: string, pageTabId?: number): Promise<E
       if (res.ok) {
         walked[index] = { token, shareName: res.shareName, files: res.files, collapseRoot: singleTopFolder(res.files) !== null };
       } else {
-        result.failed.push({ token, error: res.error });
+        result.failed.push({ token, error: describeError(res.error) });
       }
     }
   };

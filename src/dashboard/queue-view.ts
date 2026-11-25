@@ -491,6 +491,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   }
 
   return {
+    /** 画面上部のお知らせに出す（どのタブを見ていても見える） */
+    showNotice,
     /** 転送量が取れたら見積もりに使う */
     setTraffic(t: TrafficInfo | null) {
       traffic = t;
