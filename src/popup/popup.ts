@@ -3,7 +3,7 @@ import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficI
 import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
-import { ENGINE_KEY, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
+import { ENGINE_KEY, GROUP_OF, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
 import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -274,7 +274,7 @@ function render() {
   $('est-traffic').textContent = line.text;
 
   // 今動いているファイル（ポップアップの高さに収めるため最大2件。全体の件数は「処理中」に出る）
-  const allActive = items.filter((i) => ['copying', 'copied', 'deleting', 'downloading'].includes(i.state));
+  const allActive = items.filter((i) => GROUP_OF[i.state] === 'active');
   const active = allActive.slice(0, 2);
   const list = $('current');
   list.hidden = active.length === 0;

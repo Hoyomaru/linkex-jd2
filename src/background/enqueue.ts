@@ -1,5 +1,5 @@
 import { describeError } from '../shared/error-text';
-import { relDirFor, sanitizeName, singleTopFolder, withNumber } from '../shared/files';
+import { relDirFor, sanitizeName, savePathKey, singleTopFolder, withNumber } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
 import { parseShareTokens } from '../shared/share-url';
 import type { WalkedFile } from './linkex-bridge';
@@ -63,18 +63,23 @@ export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: 
   const counts = { added: 0, addedBytes: 0, alreadyQueued: 0 };
   await mutateQueue((items) => {
     const now = Date.now();
+    // 追加のたびにキュー全体を調べ直さないよう、先に引けるようにしておく
+    const queued = new Set(items.map((i) => `${i.shareToken}:${i.sourceFileId}`));
+    const paths = new Set(items.map((i) => savePathKey(i.relDir, i.outName)));
     for (const share of shares) {
       for (const f of share.files) {
-        if (items.some((i) => i.shareToken === share.token && i.sourceFileId === f.id)) {
+        if (queued.has(`${share.token}:${f.id}`)) {
           counts.alreadyQueued++;
           continue;
         }
         const relDir = relDirFor(share.shareName, share.token, f.folders, Boolean(share.collapseRoot));
         const base = sanitizeName(f.name);
         let outName = base;
-        for (let n = 2; items.some((i) => i.relDir === relDir && i.outName === outName); n++) {
+        for (let n = 2; paths.has(savePathKey(relDir, outName)); n++) {
           outName = withNumber(base, n);
         }
+        queued.add(`${share.token}:${f.id}`);
+        paths.add(savePathKey(relDir, outName));
         const item: QueueItem = {
           id: `${share.token}:${f.id}`,
           shareToken: share.token,

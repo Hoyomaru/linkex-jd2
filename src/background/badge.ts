@@ -8,7 +8,7 @@ const GREY = '#6b7480';
  * ツールバーのアイコンに残り件数を出す。
  * 失敗があれば赤、止まっていれば灰色、動いていれば緑。
  */
-export async function updateBadge(): Promise<void> {
+async function updateBadge(): Promise<void> {
   const stored = await chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]);
   const items = (stored[QUEUE_KEY] as QueueItem[] | undefined) ?? [];
   const engine = stored[ENGINE_KEY] as EngineState | undefined;

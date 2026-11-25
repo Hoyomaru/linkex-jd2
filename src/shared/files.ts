@@ -41,6 +41,14 @@ export function sanitizeName(name: string, fallback = '_'): string {
 }
 
 /** 同じフォルダ内で名前がぶつかったら「名前 (2).拡張子」のように番号を付ける */
+/**
+ * 保存先がぶつかるかを比べるための鍵。Windows は大文字と小文字を区別しないので、
+ * A.mp4 と a.mp4 は同じファイルになる（全角と半角は別のファイルなのでそろえない）
+ */
+export function savePathKey(relDir: string, outName: string): string {
+  return `${relDir}\\${outName}`.toLowerCase();
+}
+
 export function withNumber(name: string, n: number): string {
   const dot = name.lastIndexOf('.');
   if (dot <= 0) return `${name} (${n})`;

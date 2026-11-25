@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relDirFor, singleTopFolder } from '../src/shared/files.ts';
+import { relDirFor, savePathKey, singleTopFolder } from '../src/shared/files.ts';
 
 const f = (...folders: string[]) => ({ folders });
 
@@ -34,4 +34,9 @@ test('共有名が空なら、共有IDをフォルダ名にする', () => {
 
 test('フォルダ名に使えない文字は置き換える', () => {
   assert.equal(relDirFor('a', 't', ['x:y'], true), 'x_y');
+});
+
+test('保存先がぶつかるかは、大文字と小文字を区別せずに比べる（Windows では同じファイルになる）', () => {
+  assert.equal(savePathKey('共有\A', 'Movie.MP4'), savePathKey('共有\a', 'movie.mp4'));
+  assert.notEqual(savePathKey('共有', 'Ａ.mp4'), savePathKey('共有', 'A.mp4'));
 });

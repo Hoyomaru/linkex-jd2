@@ -43,7 +43,7 @@ export interface Settings {
   autoStartOnAdd: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = {
+const DEFAULT_SETTINGS: Settings = {
   jdUrl: 'http://127.0.0.1:3128',
   downloadDir: '',
   apiIntervalMs: 300,

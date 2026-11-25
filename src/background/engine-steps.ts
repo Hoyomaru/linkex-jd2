@@ -121,6 +121,8 @@ async function sendDirect(item: QueueItem): Promise<boolean> {
     await logEvent('warn', `保存せずにはURLが出なかったため、保存してから取ります: ${item.name}`);
     return false;
   }
+  // URLを発行しているあいだにキューから外された件は、JD2に渡さない（渡すと見届けない件になる）
+  if (!(await stillQueued(item.id))) return true;
   const jdId = await handToJd(item, url, t);
   await updateItem(item.id, { state: 'downloading', hash, jdId, fileSize, note: undefined, error: undefined });
   await logEvent('info', `JD2へ渡しました（保存なし）: ${item.relDir}\\${item.outName}`);
@@ -169,6 +171,14 @@ async function withJdSlot<T>(fn: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/**
+ * まだキューにあるか。待ちの件は、担当が付いた後でもキューから外せるので、
+ * 取り消せない操作（保存・JD2へ渡す）の直前に確かめる
+ */
+async function stillQueued(id: string): Promise<boolean> {
+  return (await readQueue()).some((i) => i.id === id);
+}
+
 /** JD2 に渡し、JD2 の一覧でのリンクのIDを返す（再試行のときも同じ保存先・同じ名前なので、続きから取る） */
 async function handToJd(item: QueueItem, url: string, since: number): Promise<string> {
   const jdId = await addDownload(url, { dir: item.relDir, out: item.outName });
@@ -189,7 +199,9 @@ export async function stepCopy(item: QueueItem): Promise<void> {
   // 取り始めがほんの少し前の、ほかの件の一覧も使う（同じ名前の件は同時に保存しないので取り違えない）
   const before = await listRoot(Date.now() - BEFORE_LIST_REUSE_MS).files;
   t = lap(item.id, `保存前の一覧(${before.size}件)`, t);
-  await updateItem(item.id, {
+  // 一覧を取っているあいだにキューから外された件は、保存しない（保存すると持ち主のないコピーが残る）。
+  // 保存中（copying）にした後は外せなくなる
+  const started = await updateItem(item.id, {
     state: 'copying',
     beforeIds: [...before.keys()],
     copyStartedAt: Date.now(),
@@ -201,6 +213,7 @@ export async function stepCopy(item: QueueItem): Promise<void> {
     note: undefined,
     error: undefined,
   });
+  if (!started) return;
 
   const res = await api.copyFromShare(item.shareToken, item.sourceFileId);
   const taskId = res?.taskId ?? res?.task?.id;

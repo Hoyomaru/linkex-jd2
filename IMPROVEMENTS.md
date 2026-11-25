@@ -8,7 +8,9 @@
 >
 > **対応状況（2026-11-25・4回目）**: 文書の E-2、E-3、F-1 を対応済み（あわせて E-4 の範囲も README の表に書いた）。A-4 の変更に合わせ、README の「ファイルが既に存在する場合」のおすすめを「名前を変える」にした。package.json に engines を足したが、package-lock.json は次の npm install まで更新していない。
 >
-> **対応状況（2026-11-25・5回目）**: main に取り込んだ後、npm update で F-4（vite 8.3.8・@types/chrome 0.3.8）と lock の engines を反映。パフォーマンスの C-1、C-4、C-3 を対応済み（C-3 は見えていないタブを描かないところまで。行ごとの差し替えは未対応）。typecheck と test（72件）は通っている。拡張機能での動作確認はまだ。
+> **対応状況（2026-11-25・5回目）**: main に取り込んだ後、npm update で F-4（vite 8.3.8・@types/chrome 0.3.8）と lock の engines を反映。パフォーマンスの C-1、C-4、C-3 を対応済み（C-3 は見えていないタブを描かないところまで。行ごとの差し替えは未対応）。typecheck と test（72件）は通っている。拡張機能での動作確認済み。v2.2.0 として main に取り込んだ。
+>
+> **対応状況（2026-11-25・6回目）**: 小さな片付けの E-5（docs/superpowers を private/ に移し .gitignore に追加）、B-4（IN_STORAGE_STATES に一本化）、A-6、A-7、A-8（C-9 の Set による引き当ても一緒に）、B-8（jd.version・api.share・api.shareContent を削除、ファイル内だけで使う export を外した。Motrix 版からの移行処理は残した）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認はまだ。
 
 ## 1. 概要
 

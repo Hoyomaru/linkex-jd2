@@ -1,11 +1,12 @@
 import type { JdLive, Request, Response } from '../shared/messages';
-import { ACTIVE_STATES, FINISHED_STATES, type QueueItem } from '../shared/queue';
+import { FINISHED_STATES, type QueueItem } from '../shared/queue';
+import { IN_STORAGE_STATES } from '../shared/scheduler';
 import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, start } from './engine';
 import { refreshDownloads } from './jd-monitor';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
-import { addDownload, getInfo, getVersion, queryLinks, totalSpeed } from './jd2';
+import { addDownload, getInfo, queryLinks, totalSpeed } from './jd2';
 import { clearEvents, clearHashes, mutateQueue, readEngine, readQueue } from './store';
 import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
@@ -22,8 +23,13 @@ chrome.runtime.onMessage.addListener((message: Request, sender, sendResponse) =>
 // JD2に断られないよう、JD2へのリクエストから Origin を外す（Service Worker が起きるたびに入れ直す）
 void installOriginRule();
 
-// Service Worker が止められても、1分ごとに起きて続きを再開する
-chrome.alarms.create('tick', { periodInMinutes: 1 });
+// Service Worker が止められても、1分ごとに起きて続きを再開する。
+// 起きるたびに作り直すと周期の起点が今に戻ってしまうので、なければ作る
+void chrome.alarms.get('tick').then((alarm) => {
+  if (!alarm) void chrome.alarms.create('tick', { periodInMinutes: 1 });
+});
+// 画面からのメッセージなどで起きたときも、見回りを待たずに続きを再開する（動いていれば何もしない）
+void resumeIfRunning();
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== 'tick') return;
   const engine = await readEngine();
@@ -88,8 +94,6 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
       await chrome.tabs.update(tabId, { active: true });
       return tabId;
     }
-    case 'jd.version':
-      return getVersion();
     case 'jd.info':
       return getInfo();
     case 'jd.add':
@@ -181,7 +185,7 @@ function retryItem(item: QueueItem): boolean {
 
 /** 一覧から消す。保存中・削除中の件は、ストレージにコピーが残らないよう消させない */
 function removeItems(items: QueueItem[], ids: Set<string>): number {
-  const keep = items.filter((i) => !ids.has(i.id) || ACTIVE_STATES.includes(i.state));
+  const keep = items.filter((i) => !ids.has(i.id) || IN_STORAGE_STATES.includes(i.state));
   const removed = items.length - keep.length;
   items.splice(0, items.length, ...keep);
   return removed;

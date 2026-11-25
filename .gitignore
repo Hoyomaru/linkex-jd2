@@ -2,3 +2,5 @@ node_modules/
 dist/
 # 手元だけに置くもの（調査メモ・運営とのやり取り・バックアップ）
 private/
+# 作業中の設計メモ・計画（公開しない。終わったら private/ に移す）
+docs/superpowers/

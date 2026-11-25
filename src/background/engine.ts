@@ -6,7 +6,7 @@
 import { formatBytes, isFolder, unwrapFile } from '../shared/files';
 import { Jd2ConnectionError } from '../shared/jd2-request';
 import type { EngineState, QueueItem } from '../shared/queue';
-import { PREP_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
+import { IN_STORAGE_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, noteJdDown, resetRuntime, runtime, sleep, stopWithNotice } from './engine-runtime';
@@ -105,7 +105,7 @@ async function runLoop(): Promise<void> {
     }
     const items = await readQueue();
     const downloading = items.filter((i) => i.state === 'downloading').length;
-    const prep = items.filter((i) => PREP_STATES.includes(i.state));
+    const prep = items.filter((i) => IN_STORAGE_STATES.includes(i.state));
     const waiting = items.filter((i) => i.state === 'pending' || i.state === 'retry');
 
     if (workers.size === 0 && prep.length === 0 && waiting.length === 0 && downloading === 0) {
@@ -257,7 +257,7 @@ async function runWorker(id: string): Promise<void> {
     const item = (await readQueue()).find((i) => i.id === id);
     if (!item) return;
     const waitingState = item.state === 'pending' || item.state === 'retry';
-    if (!PREP_STATES.includes(item.state) && !(first && waitingState)) return;
+    if (!IN_STORAGE_STATES.includes(item.state) && !(first && waitingState)) return;
     await processItem(item);
   }
 }

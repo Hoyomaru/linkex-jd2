@@ -1,7 +1,10 @@
 import type { ItemState, QueueItem } from './queue';
 
-/** 自分のストレージにコピーを置いている段階（保存〜削除） */
-export const PREP_STATES: ItemState[] = ['copying', 'copied', 'deleting'];
+/**
+ * 自分のストレージにコピーを置いている段階（保存〜削除）。この段階の件は、コピーが残らないよう
+ * キューから外させない。画面の区分の「処理中」（GROUP_OF の active）には downloading も入るので、それとは別
+ */
+export const IN_STORAGE_STATES: ItemState[] = ['copying', 'copied', 'deleting'];
 const WAITING_STATES: ItemState[] = ['pending', 'retry'];
 
 export interface PickContext {
@@ -32,7 +35,7 @@ export interface PickContext {
 export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
   const starts: string[] = [];
   // 担当が付いたばかりで、まだ待ちの状態のままの件も、保存中と同じに数える
-  const prep = items.filter((i) => PREP_STATES.includes(i.state) || ctx.running.has(i.id));
+  const prep = items.filter((i) => IN_STORAGE_STATES.includes(i.state) || ctx.running.has(i.id));
 
   // 保存の途中で担当がいない件（Service Worker が止められた後など）は、まず再開する
   for (const i of prep) if (!ctx.running.has(i.id)) starts.push(i.id);

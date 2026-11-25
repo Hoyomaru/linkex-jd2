@@ -7,7 +7,7 @@ export function formatSpeed(bytesPerSec: number): string {
 }
 
 /** 秒数を「1時間5分」「3分20秒」のように表す */
-export function formatDuration(seconds: number): string {
+function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '-';
   const s = Math.round(seconds);
   if (s < 60) return `${s}秒`;

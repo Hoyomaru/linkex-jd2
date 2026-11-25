@@ -1,7 +1,6 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
 import { send, type JdLive } from '../shared/messages';
 import {
-  ACTIVE_STATES,
   ENGINE_KEY,
   EVENTS_KEY,
   GROUP_LABELS,
@@ -17,6 +16,7 @@ import {
 import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
 import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 import { ArmedKeys, secondPress } from '../ui/confirm';
+import { IN_STORAGE_STATES } from '../shared/scheduler';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -469,7 +469,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       run(b, () => must(send({ type: 'queue.retry', id: item.id })));
       actions.append(b);
     }
-    if (!ACTIVE_STATES.includes(item.state)) {
+    if (!IN_STORAGE_STATES.includes(item.state)) {
       const b = el('button', 'small', '外す');
       b.title = item.state === 'downloading' ? '一覧から外します（JD2のダウンロードは続きます）' : '一覧から外します';
       run(b, () => must(send({ type: 'queue.remove', id: item.id })));

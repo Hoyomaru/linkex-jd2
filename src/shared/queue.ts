@@ -104,7 +104,6 @@ export const QUEUE_KEY = 'queue';
 export const ENGINE_KEY = 'engine';
 export const HASHES_KEY = 'downloadedHashes';
 
-export const ACTIVE_STATES: ItemState[] = ['copying', 'copied', 'deleting'];
 export const FINISHED_STATES: ItemState[] = ['done', 'skipped'];
 
 /** 画面で使う大まかな区分 */

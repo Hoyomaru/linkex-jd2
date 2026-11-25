@@ -60,15 +60,6 @@ export const api = {
   usage: () => call<{ totalSpace: number; usedSpace: number }>('get', '/api/drive/v1/usage'),
   traffic: () => call<{ usedTraffic: number; totalTraffic: number; resetTime: number }>('get', '/api/drive/v1/traffic'),
 
-  share: (token: string) => call<any>('get', '/api/drive/v1/share/get', { share_token: token }),
-  shareContent: (token: string, parentId: string | undefined, page: number) =>
-    call<any>('get', '/api/drive/v1/share/get/content', {
-      share_token: token,
-      ...(parentId ? { parent_id: parentId } : {}),
-      page,
-      page_size: 100,
-      need_parents: true,
-    }),
 
   copyFromShare: (token: string, fileId: string) =>
     call<any>('post', '/api/drive/v1/file/copy', {
