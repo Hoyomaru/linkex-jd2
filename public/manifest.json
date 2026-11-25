@@ -33,6 +33,17 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkex.io/drive/*"
+      ],
+      "js": [
+        "drive-frame.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "permissions": [
@@ -43,7 +54,8 @@
     "notifications",
     "contextMenus",
     "activeTab",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "offscreen"
   ],
   "host_permissions": [
     "https://www.linkex.io/*",

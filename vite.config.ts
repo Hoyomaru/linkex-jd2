@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         dashboard: 'dashboard.html',
         popup: 'popup.html',
+        offscreen: 'offscreen.html',
         background: 'src/background/index.ts',
       },
       output: {

@@ -57,7 +57,7 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
   return (env?.data ?? (env as unknown)) as T;
 }
 
-/** Linkex API（呼び先の一覧は shared/linkex-endpoints.ts。固定タブの中で呼び、一時的な失敗は呼び直す） */
+/** Linkex API（呼び先の一覧は shared/linkex-endpoints.ts。裏の埋め込みページ（使えなければ固定タブ）の中で呼び、一時的な失敗は呼び直す） */
 export const api = bindLinkexApi(call);
 
 /** ページ送りしながら一覧を全部取る */

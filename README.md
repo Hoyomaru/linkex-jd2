@@ -54,7 +54,7 @@ npm run build
 
 ツールバーのアイコンには残りの件数が出る（失敗があれば赤）。すべて終わったときや、JD2につながらない・Linkexのログインが切れたなどで止まったときは、Windowsの通知で知らせる。
 
-Linkexにはログインしておくこと。処理中はLinkexのドライブが固定タブで自動的に開く（裏にあってよい）。
+Linkexにはログインしておくこと。LinkexのAPIは、拡張機能の画面に出ない裏のページにLinkexのドライブを埋め込んで呼ぶので、タブは増えない。埋め込みが使えないとき（ログインが切れているときなど）だけ、Linkexのドライブが固定タブで自動的に開く。
 
 ### 設定
 
@@ -101,7 +101,9 @@ Linkexにはログインしておくこと。処理中はLinkexのドライブ�
   - `jd-monitor.ts`：JD2での完了の見届け（完了・失敗・進まない件）
   - `engine-runtime.ts`：上の3つで分け合う実行中の状態（「開始」で消すもの）
   - `enqueue.ts`：共有の中身を読んでキューに追加
-  - `linkex-tab.ts` / `linkex-bridge.ts`：Linkexの固定タブで、ページ内の通信部品を `import()` で取り出してAPIを呼ぶ。署名やログイン情報はページ自身が付ける
+  - `linkex-bridge.ts`：Linkexのドライブのページ内で、ページの通信部品を `import()` で取り出してAPIを呼ぶ。署名やログイン情報はページ自身が付ける
+  - `linkex-frame.ts`：拡張機能の裏のページ（`offscreen.html`）にドライブを iframe で埋め込み、その中（`src/content/drive-frame.ts`）で上の関数を呼ぶ。タブのように凍結されない
+  - `linkex-tab.ts`：Linkexを呼ぶ入口。埋め込みが使えないときは、ドライブを固定タブで開いてその中で呼ぶ
   - `jd2.ts`：JD2のローカルAPI
   - `origin-rule.ts`：JD2は Origin ヘッダーの付いたリクエストを断るので、この拡張機能からJD2へのリクエストだけ Origin を外す
 - **専用ページ**（`dashboard.html`）とポップアップ（`popup.html`）

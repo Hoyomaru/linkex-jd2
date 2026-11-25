@@ -14,6 +14,7 @@ import { stepCopy, stepDelete, stepDirect, stepFindCopy, stepSend } from './engi
 import { refreshDownloads } from './jd-monitor';
 import { pingJd } from './jd2';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
+import { refreshFrame } from './linkex-frame';
 import { notify } from './notify';
 import { logEvent, readEngine, readQueue, updateItem, writeEngine } from './store';
 
@@ -75,6 +76,7 @@ export async function start(): Promise<void> {
   await writeEngine({ paused: false, status: 'running', message: '開始しました' });
   takeFrozenReloads(); // 前回までの分は数えない
   resetRuntime();
+  refreshFrame();
   await logEvent('info', '処理を開始しました');
   kick();
 }

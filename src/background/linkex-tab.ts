@@ -8,6 +8,7 @@ import {
 import { loadSettings } from '../shared/settings';
 import { WALK_PROGRESS_KEY, type WalkProgress } from '../shared/walk';
 import { logEvent } from './store';
+import { callViaFrame, walkViaFrame } from './linkex-frame';
 
 const DRIVE_URL = 'https://www.linkex.io/drive/all';
 const DRIVE_PATTERN = 'https://www.linkex.io/drive/*';
@@ -31,7 +32,7 @@ const isLinkex = (url: string | undefined) => !!url && /^https:\/\/(www\.)?linke
 export class LinkexLoginError extends Error {
   /** reason: 何が失敗してログイン切れと判断したか（後から調べられるよう、メッセージに添える） */
   constructor(reason?: string) {
-    super(`Linkexのログインが切れています。固定タブでログインし直してから「開始」を押してください${reason ? `（${reason}）` : ''}`);
+    super(`Linkexのログインが切れています。Linkexにログインし直してから「開始」を押してください${reason ? `（${reason}）` : ''}`);
   }
 }
 
@@ -232,7 +233,7 @@ const isSharePage = (url: string | undefined) =>
 /**
  * 共有の中身を読む。頼んできたのが共有ページなら、まずそのページの中で読む
  * （共有の中身はログインなしで読めるので、裏のドライブのタブを用意して待たずに済む）。
- * だめならドライブの固定タブで読む。
+ * だめなら裏の埋め込みページ、それもだめならドライブの固定タブで読む。
  */
 async function doWalk(token: string, pageTabId?: number, concurrency = 6): Promise<WalkResult> {
   const startedAt = Date.now();
@@ -244,6 +245,17 @@ async function doWalk(token: string, pageTabId?: number, concurrency = 6): Promi
       const tab = await chrome.tabs.get(pageTabId).catch(() => undefined);
       if (isSharePage(tab?.url)) result = await walkIn(pageTabId, token, concurrency, state);
     }
+    if (!result?.ok) {
+      const viaFrame = await walkViaFrame(token, concurrency, (p) => {
+        if (!state.finished) void setProgress(token, { ...p, at: Date.now() });
+      });
+      if (viaFrame) {
+        result = viaFrame;
+        where = '裏の埋め込みページ';
+        if (!viaFrame.ok) void logEvent('warn', `埋め込みページで共有を読めませんでした: ${viaFrame.error}`);
+      }
+    }
+    // 埋め込みで失敗したら（理由を問わず）固定タブでも試す
     if (!result?.ok) {
       where = 'Linkexのタブ';
       await setProgress(token, { phase: 'tab', files: 0, bytes: 0, folders: 0, at: Date.now() });
@@ -359,13 +371,17 @@ export function callLinkex(req: BridgeRequest): Promise<BridgeResult> {
   });
 
   async function run(): Promise<BridgeResult> {
-    const tabId = await ensureLinkexTab();
     const startedAt = Date.now();
-    let result = await execute(tabId, req);
-    // ページの部品がまだ読み込まれていない場合は少し待って1回だけやり直す
-    if (!result.ok && result.error === 'index_not_found') {
-      await sleep(1500);
+    // まず裏の埋め込みページで呼ぶ。使えなければ固定タブで呼ぶ
+    let result = await callViaFrame(req, mayResend(req));
+    if (!result) {
+      const tabId = await ensureLinkexTab();
       result = await execute(tabId, req);
+      // ページの部品がまだ読み込まれていない場合は少し待って1回だけやり直す
+      if (!result.ok && result.error === 'index_not_found') {
+        await sleep(1500);
+        result = await execute(tabId, req);
+      }
     }
     // 遅い呼び出しは、どこで時間がかかっているかを後から調べられるよう記録する
     const elapsed = Date.now() - startedAt;
