@@ -1,6 +1,6 @@
 {
   "name": "linkex-jd2",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "Linkexの共有ファイルを自分のストレージ経由でJDownloader 2に渡すEdge拡張機能",
