@@ -9,7 +9,7 @@ import { Jd2ConnectionError } from '../shared/jd2-request';
 import { errorText, MAX_ATTEMPTS, noteJdDown, runtime } from './engine-runtime';
 import { discardLinks, nudgeLinks, queryLinks, type JdLink } from './jd2';
 import { notify } from './notify';
-import { logEvent, readEngine, readQueue, rememberHash, updateItems } from './store';
+import { logEvent, logEvents, readEngine, readQueue, rememberHash, updateItems } from './store';
 
 /** ダウンロード中の件がどれもこの時間進まなければ、知らせる（JD2が確認を待っている・止められているなど） */
 const STALL_NOTICE_MS = 15 * 60_000;
@@ -181,7 +181,7 @@ async function doRefreshDownloads(): Promise<void> {
   const jdIdOf = new Map(items.map((i) => [i.id, i.jdId]));
   await updateItems(patches, (i) => i.state === 'downloading' && i.jdId === jdIdOf.get(i.id));
   for (const [id, patch] of patches) if (patch.state) progressSavedAt.delete(id);
-  for (const [level, message] of logs) await logEvent(level, message);
+  await logEvents(logs);
   try {
     await nudgeLinks(toNudge, (await loadSettings()).forceStart);
   } catch (e) {

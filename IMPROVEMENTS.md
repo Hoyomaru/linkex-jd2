@@ -10,7 +10,9 @@
 >
 > **対応状況（2026-11-25・5回目）**: main に取り込んだ後、npm update で F-4（vite 8.3.8・@types/chrome 0.3.8）と lock の engines を反映。パフォーマンスの C-1、C-4、C-3 を対応済み（C-3 は見えていないタブを描かないところまで。行ごとの差し替えは未対応）。typecheck と test（72件）は通っている。拡張機能での動作確認済み。v2.2.0 として main に取り込んだ。
 >
-> **対応状況（2026-11-25・6回目）**: 小さな片付けの E-5（docs/superpowers を private/ に移し .gitignore に追加）、B-4（IN_STORAGE_STATES に一本化）、A-6、A-7、A-8（C-9 の Set による引き当ても一緒に）、B-8（jd.version・api.share・api.shareContent を削除、ファイル内だけで使う export を外した。Motrix 版からの移行処理は残した）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認はまだ。
+> **対応状況（2026-11-25・6回目）**: 小さな片付けの E-5（docs/superpowers を private/ に移し .gitignore に追加）、B-4（IN_STORAGE_STATES に一本化）、A-6、A-7、A-8（C-9 の Set による引き当ても一緒に）、B-8（jd.version・api.share・api.shareContent を削除、ファイル内だけで使う export を外した。Motrix 版からの移行処理は残した）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認済み。main に取り込んだ。
+>
+> **対応状況（2026-11-25・7回目）**: C-2（Service Worker の中にキューを持ち、書き換えは写しに対して行って保存できてから入れ替える。続けて起きる更新の1回化と、バッジの newValue 利用は未対応）、C-5（logEvents でまとめて書く）、D-7（作り直した後もフォーカスを戻す。行ごとの差し替えは未対応）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認はまだ。
 
 ## 1. 概要
 

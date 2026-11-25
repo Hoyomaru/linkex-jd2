@@ -12,10 +12,21 @@ import {
 // 処理ログ。新しいものを先頭に、最大 MAX_EVENTS 件まで残す
 let eventLock: Promise<unknown> = Promise.resolve();
 export function logEvent(level: EventEntry['level'], message: string): Promise<void> {
+  return logEvents([[level, message]]);
+}
+
+/**
+ * 処理ログに何件かまとめて書く（並べた順に書いたことにする）。
+ * ログは書くたびに全体を読み書きし、専用ページも描き直すので、まとまって出るものは1回で書く
+ */
+export function logEvents(entries: [EventEntry['level'], string][]): Promise<void> {
+  if (entries.length === 0) return Promise.resolve();
   const run = async () => {
     const stored = await chrome.storage.local.get(EVENTS_KEY);
     const events = (stored[EVENTS_KEY] as EventEntry[] | undefined) ?? [];
-    events.unshift({ at: Date.now(), level, message });
+    const at = Date.now();
+    // 新しいものが先頭なので、後に並べたものほど前に置く
+    events.unshift(...entries.map(([level, message]) => ({ at, level, message })).reverse());
     await chrome.storage.local.set({ [EVENTS_KEY]: events.slice(0, MAX_EVENTS) });
   };
   const next = eventLock.then(run, run);
@@ -35,16 +46,33 @@ function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export async function readQueue(): Promise<QueueItem[]> {
+/**
+ * キューの中身を Service Worker の中に持っておく（指示役は毎秒、担当は段階ごとに読むため）。
+ * キューを書き換えるのはこのファイルの mutateQueue だけなので、ここで書いた内容が常に最新になる
+ * （画面は storage を読み、onChanged で変化を受け取る）。Service Worker が起き直したら storage から読み直す
+ */
+let queueCache: QueueItem[] | null = null;
+
+async function loadQueue(): Promise<QueueItem[]> {
+  if (queueCache) return queueCache;
   const stored = await chrome.storage.local.get(QUEUE_KEY);
-  return (stored[QUEUE_KEY] as QueueItem[] | undefined) ?? [];
+  // 読んでいるあいだに書き込みが済んでいれば、そちらが新しい
+  queueCache ??= (stored[QUEUE_KEY] as QueueItem[] | undefined) ?? [];
+  return queueCache;
+}
+
+/** キューの写しを返す（書き換えても保存されない。書き換えは mutateQueue で） */
+export async function readQueue(): Promise<QueueItem[]> {
+  return structuredClone(await loadQueue());
 }
 
 export function mutateQueue<T>(fn: (items: QueueItem[]) => T): Promise<T> {
   return exclusive(async () => {
-    const items = await readQueue();
+    // 写しを書き換えて、保存できてから入れ替える（保存に失敗したら、持っている中身も元のまま）
+    const items = structuredClone(await loadQueue());
     const result = fn(items);
     await chrome.storage.local.set({ [QUEUE_KEY]: items });
+    queueCache = items;
     return result;
   });
 }

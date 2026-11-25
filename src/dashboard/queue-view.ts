@@ -355,7 +355,10 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       if (shown.length === 0) continue;
       fragments.push(renderGroup(token, all, shown));
     }
+    // 処理中はキューが頻繁に変わり、そのたびに作り直すので、キーボードで選んでいたボタンを作り直した後も選んだままにする
+    const focusKey = focusedKey();
     $('queue-groups').replaceChildren(...fragments);
+    restoreFocus(focusKey);
 
     const empty = $('queue-empty');
     empty.hidden = fragments.length > 0;
@@ -363,6 +366,19 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       ? 'キューは空です。上の欄に共有URLを貼るか、共有ページのパネルから追加してください。'
       : '条件に合うファイルはありません。';
     updateLive();
+  }
+
+  /** 一覧の中で選ばれている（フォーカスのある）要素の目印 */
+  function focusedKey(): string | undefined {
+    const active = document.activeElement as HTMLElement | null;
+    return active && $('queue-groups').contains(active) ? active.dataset.focusKey : undefined;
+  }
+
+  /** 作り直した一覧の中で、同じ目印の要素を選び直す（その件が外されていれば何もしない） */
+  function restoreFocus(key: string | undefined) {
+    if (!key) return;
+    const target = $('queue-groups').querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
+    target?.focus({ preventScroll: true });
   }
 
   function matches(item: QueueItem): boolean {
@@ -378,6 +394,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     details.addEventListener('toggle', () => openState.set(token, details.open));
 
     const summary = el('summary');
+    summary.dataset.focusKey = `group:${token}`;
     const name = el('span', 'group-name', all[0].shareName || token);
     name.title = `${all[0].shareName}（${token}）`;
     const stats = [`完了 ${s.counts.done} / ${s.total - s.counts.skipped}`];
@@ -393,6 +410,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     const actions = el('div', 'group-actions');
     if (s.counts.error) {
       const b = el('button', 'small', `失敗 ${s.counts.error}件を再試行`);
+      b.dataset.focusKey = `retryFailed:${token}`;
       run(b, () => must(send({ type: 'queue.retryFailed', token })), { inSummary: true });
       actions.append(b);
     }
@@ -405,6 +423,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
         `small${armed ? ' armed' : ''}`,
         armed ? `もう一度押すと ${waitingIds.length}件を外します` : `待ち ${waitingIds.length}件を外す`,
       );
+      b.dataset.focusKey = key;
       run(
         b,
         async () => {
@@ -427,6 +446,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       details.append(list);
       if (shown.length > limit) {
         const more = el('button', 'more', `さらに表示（残り ${shown.length - limit}件）`);
+        more.dataset.focusKey = `more:${token}`;
         more.addEventListener('click', () => {
           limits.set(token, limit + PAGE_SIZE * 2);
           scheduleRender(0);
@@ -466,11 +486,13 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     const actions = el('div', 'actions');
     if (item.state === 'error' || item.state === 'skipped') {
       const b = el('button', 'small', item.state === 'skipped' ? 'もう一度ダウンロード' : '再試行');
+      b.dataset.focusKey = `retry:${item.id}`;
       run(b, () => must(send({ type: 'queue.retry', id: item.id })));
       actions.append(b);
     }
     if (!IN_STORAGE_STATES.includes(item.state)) {
       const b = el('button', 'small', '外す');
+      b.dataset.focusKey = `remove:${item.id}`;
       b.title = item.state === 'downloading' ? '一覧から外します（JD2のダウンロードは続きます）' : '一覧から外します';
       run(b, () => must(send({ type: 'queue.remove', id: item.id })));
       actions.append(b);
