@@ -52,8 +52,13 @@ async function addFromMenu(text: string): Promise<void> {
     if (r.failed.length) parts.push(`開けなかった共有 ${r.failed.length}件`);
     const { autoStartOnAdd } = await loadSettings();
     if (r.added > 0 && autoStartOnAdd && (await readEngine()).paused) {
-      await start();
-      parts.push('処理を開始しました');
+      try {
+        await start();
+        parts.push('処理を開始しました');
+      } catch (e) {
+        // 追加はできているので、追加の失敗とは分けて知らせる
+        parts.push(`開始できませんでした: ${String((e as Error)?.message ?? e)}`);
+      }
     }
     await notify('menu-add', `リンク ${urls.length}件をキューへ`, parts.join('・'));
   } catch (e) {

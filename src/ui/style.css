@@ -172,6 +172,7 @@ textarea { resize: vertical; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.running { background: var(--info-soft); color: var(--info); }
 .pill.waiting { background: var(--warn-soft); color: var(--warn); }
+.pill.error { background: var(--danger-soft); color: var(--danger); }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
 .dot.ok { background: var(--ok); }

@@ -82,9 +82,14 @@ export async function readEngine(): Promise<EngineState> {
 // 全体の状態の書き換えも1本にまとめる。
 // 読んでから書くまでの間に別の書き換え（一時停止など）が入ると、古い値で上書きして消してしまうため
 let engineLock: Promise<unknown> = Promise.resolve();
-export function writeEngine(patch: Partial<EngineState>): Promise<EngineState> {
+export function writeEngine(
+  patch: Partial<EngineState>,
+  /** 書く直前の状態で確かめる条件。合わなければ書かない（止まった後に、止まる前の状況で上書きしないため） */
+  when: (current: EngineState) => boolean = () => true,
+): Promise<EngineState> {
   const run = async () => {
     const current = await readEngine();
+    if (!when(current)) return current;
     // 中身が変わらないなら書かない（空き待ちの間は毎秒同じ表示を書こうとするため。
     // 書くたびにアイコンの件数を数え直す処理が走る）
     const same = Object.entries(patch).every(([k, v]) => current[k as keyof EngineState] === v);

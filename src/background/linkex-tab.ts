@@ -462,8 +462,22 @@ async function execute(tabId: number, req: BridgeRequest): Promise<BridgeResult>
         throw new Error('Linkexのタブがすぐに凍結されてしまいます。Linkexのタブを一度表示してから、もう一度「開始」を押してください');
       }
       await reloadAndWait(tabId);
+      // 保存は、頼みがもう届いていると送り直したぶん二重に保存してしまう。送り直さずに一時的な失敗として返し、
+      // できたコピーは次の周回のコピー探しで拾う（できていなければ、時間切れの後に保存し直す）
+      if (!mayResend(req)) {
+        return { ok: false, error: `timeout: Linkexのタブが応答しなかったため、二重に保存しないよう送り直していません（${req.path}）` };
+      }
     }
   }
+}
+
+/**
+ * 返事が来ないまま読み込み直したとき、同じ頼みを送り直してよいか。
+ * 保存（file/copy）は、頼みが届いていれば送り直すと二重に保存するので送り直さない
+ * （api.ts の呼び直しで POST を 429 のときだけにしているのと同じ考え。削除などは送り直しても同じ結果になる）
+ */
+function mayResend(req: BridgeRequest): boolean {
+  return !(req.method === 'post' && /\/file\/copy$/.test(req.path));
 }
 
 let frozenReloads = 0;

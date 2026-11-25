@@ -1,5 +1,5 @@
 import { directHttpLink } from '../shared/jd2-status';
-import { requestJd } from '../shared/jd2-request';
+import { requestJd, type RequestOptions } from '../shared/jd2-request';
 import { loadSettings } from '../shared/settings';
 
 /**
@@ -7,13 +7,24 @@ import { loadSettings } from '../shared/settings';
  * 引数は JSON にして URL エンコードし、順番どおり `?a&b` の形で渡す。応答は { data: ... }。
  * JD2はリクエストに Origin ヘッダーが付いていると断るので、拡張機能からのリクエストでは外している（origin-rule.ts）。
  */
-export async function jd<T = unknown>(path: string, ...params: unknown[]): Promise<T> {
+export function jd<T = unknown>(path: string, ...params: unknown[]): Promise<T> {
+  return jdWith<T>({}, path, ...params);
+}
+
+/**
+ * 呼び直しを少なくした呼び方（画面の状態確認・開始前の確認用）。
+ * JD2 が起動していないときに、ふつうの呼び方だと約9秒待ってからでないと分からないため。
+ * JD2 は接続の2〜3割をいきなり切るので、5回（待ちは合計約3秒）までは呼び直す（続けて5回切られるのは 0.3% ほど）
+ */
+const QUICK: RequestOptions = { attempts: 5, timeoutMs: 3_000 };
+
+async function jdWith<T>(options: RequestOptions, path: string, ...params: unknown[]): Promise<T> {
   const { jdUrl } = await loadSettings();
   const query = params.map((p) => encodeURIComponent(JSON.stringify(p))).join('&');
   const url = `${jdUrl.replace(/\/+$/, '')}/${path}${query ? `?${query}` : ''}`;
 
   // 切られたら呼び直す。ずっとつながらなければ Jd2ConnectionError
-  const res = await requestJd(url);
+  const res = await requestJd(url, options);
   const json = res.json as { data?: T; type?: string } | null;
   if (!res.ok || !json) {
     const hint = json?.type === 'AUTH_FAILED' ? '（JD2にリクエストを断られました。拡張機能を再読み込みしてください）' : '';
@@ -26,6 +37,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function getVersion(): Promise<number> {
   return jd<number>('jd/version');
+}
+
+/** JD2 につながるかを手早く確かめる。つながらなければ Jd2ConnectionError */
+export async function pingJd(): Promise<void> {
+  await jdWith(QUICK, 'jd/version');
 }
 
 const GENERAL = 'org.jdownloader.settings.GeneralSettings';
@@ -177,9 +193,9 @@ const LINK_FIELDS = {
 };
 
 /** ダウンロード一覧のリンクのうち、ids のもの */
-export async function queryLinks(ids: string[]): Promise<JdLink[]> {
+export async function queryLinks(ids: string[], { quick = false } = {}): Promise<JdLink[]> {
   if (ids.length === 0) return [];
-  const all = await jd<JdLink[]>('downloadsV2/queryLinks', LINK_FIELDS);
+  const all = await jdWith<JdLink[]>(quick ? QUICK : {}, 'downloadsV2/queryLinks', LINK_FIELDS);
   const want = new Set(ids);
   return all.filter((l) => want.has(String(l.uuid)));
 }
@@ -202,14 +218,23 @@ export async function nudgeLinks(ids: string[], force: boolean): Promise<void> {
   const links = ids.map(Number);
   await jd('downloadsV2/setEnabled', false, links, []);
   await sleep(2_000);
-  await jd('downloadsV2/setEnabled', true, links, []);
+  // 有効に戻せないと、無効のまま止まってしまうので、何回か試す
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await jd('downloadsV2/setEnabled', true, links, []);
+      break;
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      await sleep(2_000);
+    }
+  }
   await jd('downloadcontroller/start').catch(() => undefined);
   if (force) await jd('downloadsV2/forceDownload', links, []).catch(() => undefined);
 }
 
 /** JD2全体のダウンロード速度（バイト/秒） */
-export async function totalSpeed(): Promise<number> {
-  return jd<number>('downloadcontroller/getSpeedInBps');
+export async function totalSpeed({ quick = false } = {}): Promise<number> {
+  return jdWith<number>(quick ? QUICK : {}, 'downloadcontroller/getSpeedInBps');
 }
 
 function joinDir(base: string, rel: string): string {

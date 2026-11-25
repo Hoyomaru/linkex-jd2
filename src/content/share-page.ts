@@ -79,6 +79,7 @@ const STYLE = `
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .pill.running { background: var(--info-soft); color: var(--info); }
 .pill.waiting { background: var(--warn-soft); color: var(--warn); }
+.pill.error { background: var(--danger-soft); color: var(--danger); }
 .body { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; }
 .body > * { flex-shrink: 0; }
 

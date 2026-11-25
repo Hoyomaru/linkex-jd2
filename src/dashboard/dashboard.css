@@ -10,6 +10,8 @@
 .status-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .status-line h1 { font-size: 17px; }
 .engine-message { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+/* 止まった理由は対処まで読めるよう、省略せずに折り返す */
+.engine-message.full-text { white-space: normal; overflow-wrap: anywhere; }
 .toggle { min-width: 96px; }
 .toggle.pause { background: var(--panel); color: var(--text); border-color: var(--border); }
 

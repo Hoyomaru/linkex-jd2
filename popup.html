@@ -12,6 +12,10 @@
       .head h1 { font-size: var(--fs-l); flex: 1; min-width: 0; }
       #toggle { min-height: 30px; padding: 3px 12px; font-size: var(--fs-s); }
       #engine { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* 止まった理由は対処まで読めるよう、省略せずに折り返す */
+      #engine.full-text { white-space: normal; overflow-wrap: anywhere; }
+      /* JD2 につながらないときは、フッターの小さい表示だけでなく上に目立たせる */
+      .jd-alert { background: var(--danger-soft); color: var(--danger); border-radius: var(--r-s); padding: 8px 10px; font-size: var(--fs-s); }
       .wrap { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 
       /* 進み具合 */
@@ -79,6 +83,7 @@
     </header>
 
     <div class="wrap">
+      <div id="jd-alert" class="jd-alert" role="alert" hidden></div>
       <section id="hero" class="card hero empty">
         <div class="hero-top">
           <div id="percent" class="percent">キューは空です</div>

@@ -26,9 +26,13 @@ test('最初から断られた（ファイルが見つかりません）は fail
   assert.equal(jdLinkState({ statusIconKey: 'false', bytesLoaded: 0, enabled: true }, 100), 'failed');
 });
 
-test('無効にされた・スキップされたリンクは failed', () => {
-  assert.equal(jdLinkState({ enabled: false }, 100), 'failed');
-  assert.equal(jdLinkState({ enabled: true, skipped: true }, 100), 'failed');
+test('無効にされた・スキップされたリンクは、失敗ではなく held（ファイルごと消して渡し直さない）', () => {
+  assert.equal(jdLinkState({ enabled: false }, 100), 'held');
+  assert.equal(jdLinkState({ enabled: true, skipped: true }, 100), 'held');
+});
+
+test('最初から断られたリンクを無効にしても failed のまま', () => {
+  assert.equal(jdLinkState({ statusIconKey: 'false', enabled: false }, 100), 'failed');
 });
 
 test('ダウンロード中・開始中は active', () => {

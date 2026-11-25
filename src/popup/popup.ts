@@ -25,7 +25,14 @@ $('counts').addEventListener('click', (ev) => {
 });
 
 $('toggle').addEventListener('click', async () => {
-  await send({ type: engine?.paused === false ? 'queue.pause' : 'queue.start' });
+  const button = $<HTMLButtonElement>('toggle');
+  button.disabled = true;
+  try {
+    const res = await send({ type: engine?.paused === false ? 'queue.pause' : 'queue.start' });
+    if (!res.ok) showResult(res.error, 'ng');
+  } finally {
+    button.disabled = false;
+  }
 });
 
 // ---------- 追加 ----------
@@ -202,6 +209,8 @@ function render() {
   $('pill').textContent = view.pill;
   $('pill').className = `pill ${view.tone}`;
   $('engine').textContent = view.message;
+  $('engine').classList.toggle('full-text', view.wrap);
+  $('engine').classList.toggle('ng', view.tone === 'error');
   $('engine').title = view.message;
   $('toggle').textContent = view.paused ? '開始' : '一時停止';
   $('toggle').dataset.icon = view.paused ? 'play' : 'pause';
@@ -322,6 +331,9 @@ pollJd((live, error) => {
   $('jd-dot').className = `dot ${live ? 'ok' : 'ng'}`;
   $('jd-text').textContent = live ? 'JD2 接続中' : 'JD2 に接続できません';
   $('jd').title = error ?? '';
+  // 原因と対処はツールチップだけでなく、上に出す（拡張機能の裏側が応えないなど、JD2 以外の失敗もそのまま出す）
+  $('jd-alert').hidden = Boolean(live);
+  $('jd-alert').textContent = live ? '' : (error ?? 'JD2 に接続できません');
   render();
 });
 

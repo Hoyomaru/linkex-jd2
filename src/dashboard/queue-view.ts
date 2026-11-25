@@ -237,6 +237,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     pill.textContent = view.pill;
     pill.className = `pill ${view.tone}`;
     $('engine-message').textContent = view.message;
+    $('engine-message').classList.toggle('full-text', view.wrap);
+    $('engine-message').classList.toggle('ng', view.tone === 'error');
     $('engine-message').title = view.message;
     toggle.textContent = view.paused ? '開始' : '一時停止';
     toggle.className = view.paused ? 'primary toggle' : 'toggle pause';

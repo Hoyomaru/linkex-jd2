@@ -1,7 +1,8 @@
 import type { JdLive, Request, Response } from '../shared/messages';
 import { ACTIVE_STATES, FINISHED_STATES, type QueueItem } from '../shared/queue';
 import { loadSettings, saveSettings } from '../shared/settings';
-import { kick, pause, refreshDownloads, start } from './engine';
+import { kick, pause, start } from './engine';
+import { refreshDownloads } from './jd-monitor';
 import { addWalkedToQueue, enqueueShares } from './enqueue';
 import { callLinkex, ensureLinkexTab, walkShareInTab } from './linkex-tab';
 import { addDownload, getInfo, getVersion, queryLinks, totalSpeed } from './jd2';
@@ -95,7 +96,8 @@ async function handle(req: Request, pageTabId?: number): Promise<unknown> {
       return addDownload(req.url, { dir: req.dir, out: req.out });
     case 'jd.active': {
       const ids = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId).map((i) => i.jdId!);
-      const [links, speed] = await Promise.all([queryLinks(ids), totalSpeed()]);
+      // 画面の状態確認は、JD2 が落ちていることを早く見せたいので呼び直しを少なくする
+      const [links, speed] = await Promise.all([queryLinks(ids, { quick: true }), totalSpeed({ quick: true })]);
       return {
         downloadSpeed: speed || 0,
         active: links
@@ -165,7 +167,15 @@ function retryItem(item: QueueItem): boolean {
   if (item.state !== 'error' && item.state !== 'skipped') return false;
   // 「重複のため省略」を落とし直す場合は、重複判定を外す
   const force = item.state === 'skipped' || item.force;
-  Object.assign(item, { state: 'retry', attempts: 0, error: undefined, note: undefined, force, updatedAt: Date.now() });
+  Object.assign(item, {
+    state: 'retry',
+    attempts: 0,
+    error: undefined,
+    note: undefined,
+    duplicate: undefined,
+    force,
+    updatedAt: Date.now(),
+  });
   return true;
 }
 

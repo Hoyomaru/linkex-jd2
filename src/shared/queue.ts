@@ -1,7 +1,11 @@
 /**
- * キューの1件の状態。
- * pending → copying → copied → deleting → downloading → done
- * 途中で失敗したら retry（共有から保存し直す）、何度も失敗したら error。
+ * キューの1件の状態。取り方によって通る段階が違う。
+ * - 保存せずに取る（設定「保存せずにダウンロード」、初期値）: pending/retry → downloading → done
+ * - 保存してから取る（設定がオフ、または直接は取れなかった件）:
+ *   pending/retry → copying（保存中） → copied（コピーあり） → deleting（JD2に渡し済み・コピーを削除中） → downloading → done
+ *   deleting は、失敗したコピーや重複で省く件のコピーを消すときにも通る（このときは JD2 に渡していない）。
+ * 同じ中身をダウンロード済みなら skipped。
+ * 途中で失敗したら retry（次に割り当てられたとき、その時点の設定に従って取り直す）、何度も失敗したら error。
  */
 export type ItemState =
   | 'pending'
@@ -52,8 +56,15 @@ export interface QueueItem {
   destFileId?: string;
   /** JD2のダウンロード一覧でのリンクのID */
   jdId?: string;
-  /** 自分のコピーのサイズ（Linkexの file/get）。JD2が途中で切れた分を完了にしていないか確かめる */
+  /**
+   * 受け取るべき大きさ。CDN が実際に配っている大きさ（ダウンロードURLの最後の段）で、
+   * 取れなければ Linkex の file/get の size。JD2 が途中で切れた分を完了にしていないか確かめる
+   */
   fileSize?: number;
+  /** JD2 に渡した後のコピー削除に失敗した回数（ダウンロードの再試行回数 attempts とは別に数える） */
+  deleteAttempts?: number;
+  /** 保存してから取る件で、コピーを作った後に重複と分かった（コピーを消したら skipped にする） */
+  duplicate?: boolean;
   totalLength?: number;
   completedLength?: number;
   note?: string;
@@ -62,10 +73,21 @@ export interface QueueItem {
   updatedAt: number;
 }
 
+/**
+ * 処理全体の今の段階。画面の札の色と文言はこれで決める（message は表示するだけで、判定には使わない）。
+ * - running / waiting: 動いている（waiting は空きや転送量などを待っているだけ）
+ * - paused: 利用者が止めた / finished: 全部終わった
+ * - stopped: JD2 につながらない・ログイン切れなどで、全体を止めた（message に理由と対処）
+ * - crashed: 指示役が思わぬエラーで止まった（1分ごとの見回りで動かし直す）
+ */
+export type EngineStatus = 'running' | 'waiting' | 'paused' | 'finished' | 'stopped' | 'crashed';
+
 export interface EngineState {
   paused: boolean;
   /** 画面に出す今の状況 */
   message: string;
+  /** 古い版で保存した状態には無い */
+  status?: EngineStatus;
   updatedAt: number;
 }
 
