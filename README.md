@@ -33,7 +33,7 @@ npm install
 npm run build
 ```
 
-`npm run build` は型チェック（`tsc --noEmit`）もしてからビルドする。型チェックだけなら `npm run typecheck`、テストは `npm test`。
+`npm run build` は型チェック（`tsc --noEmit`）もしてからビルドする。型チェックだけなら `npm run typecheck`（テストのコードも `tsconfig.test.json` で型チェックする）、テストは `npm test`。
 
 `dist/` に拡張機能ができるので、上の手順3で `dist` フォルダを選ぶ（`content.js` だけは別の設定 `vite.content.config.ts` で1ファイルにまとめてビルドする）。ビルドし直したら、拡張機能の一覧で「再読み込み」を押し、開いている共有ページも再読み込みする。`npm run watch` にしておくと、ソースを変えるたびに `dist` が作り直される（このときも「再読み込み」は必要）。
 

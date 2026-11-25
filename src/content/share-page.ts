@@ -194,7 +194,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
           <button class="primary" data-act="add-selected">選んだファイルを追加</button>
           <button data-act="pick-cancel">やめる</button>
         </div>
-        <div class="status"></div>
+        <div class="status" aria-live="polite"></div>
         <div class="progress" hidden>
           <div class="p-top">
             <div class="p-pct"></div>

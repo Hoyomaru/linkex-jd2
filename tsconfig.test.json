@@ -1,0 +1,13 @@
+{
+  // テスト（tests/*.test.ts）の型チェック用。テストは Node の型除去でそのまま動かすので、
+  // .ts 付きの import を許し、型除去で消せない書き方（enum・パラメータプロパティなど）を禁じる。
+  // テストから読むモジュールが、拡張子なしで値を import していると Node では動かないが、それはここでは見つけられない
+  // （nodenext にすると見つけられるが、Node では問題ない import type まで拡張子を求められる）。npm test で分かる
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["tests"]
+}

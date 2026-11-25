@@ -159,7 +159,10 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   for (const chip of document.querySelectorAll<HTMLButtonElement>('#event-filters .chip')) {
     chip.addEventListener('click', () => {
       eventLevel = chip.dataset.level as 'all' | 'problem';
-      document.querySelectorAll('#event-filters .chip').forEach((c) => c.classList.toggle('active', c === chip));
+      document.querySelectorAll('#event-filters .chip').forEach((c) => {
+        c.classList.toggle('active', c === chip);
+        c.setAttribute('aria-pressed', String(c === chip));
+      });
       renderEvents();
     });
   }
@@ -295,6 +298,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       ...FILTERS.map((f) => {
         const n = f === 'all' ? total : counts[f];
         const chip = el('button', `chip${filter === f ? ' active' : ''}`, f === 'all' ? 'すべて' : GROUP_LABELS[f]);
+        // 選ばれているかを、色だけでなく読み上げでも伝える
+        chip.setAttribute('aria-pressed', String(filter === f));
         chip.append(el('span', 'n', String(n)));
         chip.addEventListener('click', () => {
           filter = f;
@@ -509,7 +514,9 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
         const time = el('time');
         const d = new Date(ev.at);
         time.textContent = `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
-        li.append(time, el('span', '', ev.message));
+        // 注意とエラーは、色だけでなく文字でも分かるようにする
+        const label = ev.level === 'warn' ? '注意' : ev.level === 'error' ? 'エラー' : '';
+        li.append(time, ...(label ? [el('span', 'level', label)] : []), el('span', '', ev.message));
         return li;
       }),
     );

@@ -131,25 +131,51 @@ export function writeEngine(
   return next;
 }
 
-export async function readHashes(): Promise<Record<string, { name: string; at: number }>> {
+/**
+ * ダウンロード済みの記録（中身のハッシュ → 名前・時刻）。重複の省略に使う。
+ * 消さない限り増え続けるので、キューと同じく Service Worker の中に持っておき、1件ごとに全体を読み直さない。
+ * 書き換えるのはこのファイルだけ（画面は件数を出すのに storage を読むだけ）
+ */
+type Hashes = Record<string, { name: string; at: number }>;
+let hashCache: Hashes | null = null;
+
+async function loadHashes(): Promise<Hashes> {
+  if (hashCache) return hashCache;
   const stored = await chrome.storage.local.get(HASHES_KEY);
-  return (stored[HASHES_KEY] as Record<string, { name: string; at: number }> | undefined) ?? {};
+  hashCache ??= (stored[HASHES_KEY] as Hashes | undefined) ?? {};
+  return hashCache;
 }
 
-/** ダウンロード済みの記録（重複の省略に使う）を全部消す */
-export async function clearHashes(): Promise<void> {
-  await chrome.storage.local.remove(HASHES_KEY);
+/** その中身をダウンロード済みか */
+export async function isDownloaded(hash: string): Promise<boolean> {
+  return Boolean((await loadHashes())[hash]);
 }
 
 // ダウンロード済みの記録の書き換えも1本にまとめる（同時に書くと片方の記録が消えるため）
 let hashLock: Promise<unknown> = Promise.resolve();
-export function rememberHash(hash: string, name: string): Promise<void> {
-  const run = async () => {
-    const hashes = await readHashes();
-    hashes[hash] = { name, at: Date.now() };
-    await chrome.storage.local.set({ [HASHES_KEY]: hashes });
-  };
+function withHashLock(run: () => Promise<void>): Promise<void> {
   const next = hashLock.then(run, run);
   hashLock = next.catch(() => undefined);
   return next;
+}
+
+/** ダウンロード済みの記録（重複の省略に使う）を全部消す */
+export function clearHashes(): Promise<void> {
+  return withHashLock(async () => {
+    await chrome.storage.local.remove(HASHES_KEY);
+    hashCache = {};
+  });
+}
+
+/** ダウンロード済みとして記録する（何件かまとめて1回で書く） */
+export function rememberHashes(entries: { hash: string; name: string }[]): Promise<void> {
+  if (entries.length === 0) return Promise.resolve();
+  return withHashLock(async () => {
+    // 写しに足して、保存できてから入れ替える
+    const next = { ...(await loadHashes()) };
+    const at = Date.now();
+    for (const { hash, name } of entries) next[hash] = { name, at };
+    await chrome.storage.local.set({ [HASHES_KEY]: next });
+    hashCache = next;
+  });
 }

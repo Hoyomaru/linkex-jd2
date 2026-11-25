@@ -9,7 +9,7 @@ import { Jd2ConnectionError } from '../shared/jd2-request';
 import { errorText, MAX_ATTEMPTS, noteJdDown, runtime } from './engine-runtime';
 import { discardLinks, nudgeLinks, queryLinks, type JdLink } from './jd2';
 import { notify } from './notify';
-import { logEvent, logEvents, readEngine, readQueue, rememberHash, updateItems } from './store';
+import { logEvent, logEvents, readEngine, readQueue, rememberHashes, updateItems } from './store';
 
 /** ダウンロード中の件がどれもこの時間進まなければ、知らせる（JD2が確認を待っている・止められているなど） */
 const STALL_NOTICE_MS = 15 * 60_000;
@@ -104,6 +104,8 @@ async function doRefreshDownloads(): Promise<void> {
     stillActive.length,
   );
   const patches = new Map<string, Partial<QueueItem>>();
+  /** 完了した件の中身（ダウンロード済みとして、まとめて1回で記録する） */
+  const downloaded: { hash: string; name: string }[] = [];
   const logs: [Parameters<typeof logEvent>[0], string][] = [];
   // JD2があきらめたリンク。次の周回で新しいURLを発行して渡し直す（保存せずに取る件は保存しない）ので、
   // 落としかけのファイルごとJD2の一覧から消す
@@ -132,7 +134,7 @@ async function doRefreshDownloads(): Promise<void> {
       missingSince.set(item.jdId!, since);
       if (Date.now() - since < MISSING_CONFIRM_MS) continue;
       missingSince.delete(item.jdId!);
-      if (item.hash) await rememberHash(item.hash, item.name);
+      if (item.hash) downloaded.push({ hash: item.hash, name: item.name });
       patches.set(item.id, { state: 'done', jdId: undefined, note: 'JD2の一覧になし' });
       logs.push(['info', `完了（JD2の一覧になし）: ${item.name}`]);
     } else if (state === 'held') {
@@ -144,7 +146,7 @@ async function doRefreshDownloads(): Promise<void> {
         logs.push(['warn', `JD2で無効・スキップにされたため、待っています: ${item.name}`]);
       }
     } else if (state === 'done') {
-      if (item.hash) await rememberHash(item.hash, item.name);
+      if (item.hash) downloaded.push({ hash: item.hash, name: item.name });
       patches.set(item.id, { ...progress, state: 'done', jdId: undefined });
       logs.push(['info', `完了: ${item.name}`]);
     } else if (state === 'failed' || state === 'truncated' || stuck === 'give-up') {
@@ -177,6 +179,7 @@ async function doRefreshDownloads(): Promise<void> {
       }
     }
   }
+  await rememberHashes(downloaded);
   // 確認しているあいだに外されたり状態が変わったりした件は書き換えない
   const jdIdOf = new Map(items.map((i) => [i.id, i.jdId]));
   await updateItems(patches, (i) => i.state === 'downloading' && i.jdId === jdIdOf.get(i.id));

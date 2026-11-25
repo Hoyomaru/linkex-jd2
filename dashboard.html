@@ -37,11 +37,11 @@
             <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
           </div>
         </div>
-        <nav class="tabs" role="tablist">
-          <a href="#queue" data-tab="queue" role="tab">キュー <span id="tab-badge-error" class="badge" hidden></span></a>
-          <a href="#log" data-tab="log" role="tab">処理ログ</a>
-          <a href="#settings" data-tab="settings" role="tab">設定</a>
-          <a href="#tools" data-tab="tools" role="tab">確認用</a>
+        <nav class="tabs" aria-label="ページ">
+          <a href="#queue" data-tab="queue">キュー <span id="tab-badge-error" class="badge" hidden></span></a>
+          <a href="#log" data-tab="log">処理ログ</a>
+          <a href="#settings" data-tab="settings">設定</a>
+          <a href="#tools" data-tab="tools">確認用</a>
         </nav>
       </div>
     </header>
@@ -84,7 +84,7 @@
 
         <section class="panel">
           <div class="toolbar">
-            <div class="chips" id="filters"></div>
+            <div class="chips" id="filters" role="group" aria-label="キューの絞り込み"></div>
             <div class="row">
               <input type="search" id="queue-search" placeholder="ファイル名で絞り込み" aria-label="ファイル名で絞り込み" />
               <button id="retry-failed" hidden>失敗をすべて再試行</button>
@@ -100,9 +100,9 @@
       <div data-page="log" class="page" hidden>
         <section class="panel">
           <div class="spread">
-            <div class="chips" id="event-filters">
-              <button class="chip active" data-level="all">すべて</button>
-              <button class="chip" data-level="problem">警告・エラーだけ</button>
+            <div class="chips" id="event-filters" role="group" aria-label="処理ログの絞り込み">
+              <button class="chip active" data-level="all" aria-pressed="true">すべて</button>
+              <button class="chip" data-level="problem" aria-pressed="false">警告・エラーだけ</button>
             </div>
             <button id="events-clear">ログを消す</button>
           </div>

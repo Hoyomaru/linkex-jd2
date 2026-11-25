@@ -123,6 +123,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
 .events time { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .events .warn { color: var(--warn); }
 .events .error { color: var(--danger); }
+.events .level { flex: none; font-weight: 600; font-size: 12px; }
 
 /* ---------- 設定 ---------- */
 .settings-form { display: flex; flex-direction: column; gap: 16px; }

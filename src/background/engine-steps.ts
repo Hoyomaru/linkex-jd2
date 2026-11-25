@@ -12,7 +12,7 @@ import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
 import { addDownload } from './jd2';
-import { logEvent, readHashes, readQueue, updateItem } from './store';
+import { isDownloaded, logEvent, readQueue, updateItem } from './store';
 
 const COPY_TIMEOUT_MS = 5 * 60_000;
 /** 保存が終わってから、コピーが一覧に出てくるのを待つ時間 */
@@ -137,7 +137,7 @@ const DUPLICATE_NOTE = '同じ中身をダウンロード済み';
 
 /** 同じ中身をダウンロード済みか（「もう一度ダウンロード」で強制した件は除く） */
 async function isDuplicate(item: QueueItem, hash: string | null): Promise<boolean> {
-  return !item.force && hash !== null && Boolean((await readHashes())[hash]);
+  return !item.force && hash !== null && (await isDownloaded(hash));
 }
 
 /** 重複のため省く（自分のストレージにコピーがない件だけ。コピーがある件は消してから省く） */

@@ -88,7 +88,9 @@ function showTab() {
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach((a) => {
     const active = a.dataset.tab === tab;
     a.classList.toggle('active', active);
-    a.setAttribute('aria-selected', String(active));
+    // タブはページ内のリンクなので、今のページを aria-current で伝える
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   });
 }
 window.addEventListener('hashchange', showTab);

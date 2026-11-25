@@ -5,16 +5,16 @@
   対象は PowerShell で今いるフォルダ（cd した先）。-Path を付ければ別のフォルダも指定できる。
 
 .EXAMPLE
-  cd D:\Downloads
+  cd <調べたいフォルダ>
 
   # まず確認だけ（何もリネームしない）
-  E:\Tools\linkex-jd2\scripts\fix-extensions.ps1
+  <このリポジトリ>\scripts\fix-extensions.ps1
 
   # 実際にリネームする
-  E:\Tools\linkex-jd2\scripts\fix-extensions.ps1 -Apply
+  <このリポジトリ>\scripts\fix-extensions.ps1 -Apply
 
   # サブフォルダも対象にする
-  E:\Tools\linkex-jd2\scripts\fix-extensions.ps1 -Recurse -Apply
+  <このリポジトリ>\scripts\fix-extensions.ps1 -Recurse -Apply
 #>
 param(
     [string]$Path = (Get-Location).Path,

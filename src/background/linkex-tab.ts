@@ -136,15 +136,16 @@ function reloadAndWait(tabId: number): Promise<void> {
   return run;
 }
 
+/** 前回使った固定タブのID */
+let cachedTabId: number | null = null;
+/** タブを探している・開いている最中なら、その結果を待って使う（同時に呼ばれてタブが増えないように） */
+let ensuring: Promise<number> | null = null;
+
 /**
  * Linkex Web版ドライブの固定タブを用意する。
  * すでに開いていればそれを使い、なければ裏で固定タブとして開く。
  * メモリ不足で破棄されないよう autoDiscardable を切る。
  */
-let cachedTabId: number | null = null;
-/** タブを探している・開いている最中なら、その結果を待って使う（同時に呼ばれてタブが増えないように） */
-let ensuring: Promise<number> | null = null;
-
 export async function ensureLinkexTab(): Promise<number> {
   // ほかの件が読み込み直している最中なら、終わるのを待つ
   if (cachedTabId !== null) await reloading.get(cachedTabId)?.catch(() => undefined);
@@ -268,10 +269,10 @@ async function doWalk(token: string, pageTabId?: number, concurrency = 6): Promi
   }
 }
 
-/** 指定したタブの中で共有をたどる。そのあいだ、途中経過を拾って storage に書く */
 /** ページから20秒以上返事がなければ、凍結などで止まっているとみなす */
 const WALK_STALL_MS = 20_000;
 
+/** 指定したタブの中で共有をたどる。そのあいだ、途中経過を拾って storage に書く */
 async function walkIn(tabId: number, token: string, concurrency: number, state: { finished: boolean }): Promise<WalkResult> {
   let lastAlive = Date.now();
   let stallTimer: ReturnType<typeof setInterval> | undefined;

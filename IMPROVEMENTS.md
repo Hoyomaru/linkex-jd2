@@ -14,7 +14,9 @@
 >
 > **対応状況（2026-11-25・7回目）**: C-2（Service Worker の中にキューを持ち、書き換えは写しに対して行って保存できてから入れ替える。続けて起きる更新の1回化と、バッジの newValue 利用は未対応）、C-5（logEvents でまとめて書く）、D-7（作り直した後もフォーカスを戻す。行ごとの差し替えは未対応）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認済み。main に取り込んだ。
 >
-> **対応状況（2026-11-25・8回目）**: 重複をまとめる B-7（messages.ts の ResponseMap と、background/index.ts の型付きの受け持ち表）、B-3（shared/linkex-endpoints.ts に呼び先を一本化）、B-6（ui/summary.ts）、B-5（共有ページの send・型・storage のキーを共通に寄せ、mount を mount・setupStatus・setupAdding に分けた。速度の取得は「ダウンロード中のときだけ」の動きを残すため pollJd に寄せていない）を対応済み。typecheck・test（77件）・build は通っている。拡張機能での動作確認はまだ。
+> **対応状況（2026-11-25・8回目）**: 重複をまとめる B-7（messages.ts の ResponseMap と、background/index.ts の型付きの受け持ち表）、B-3（shared/linkex-endpoints.ts に呼び先を一本化）、B-6（ui/summary.ts）、B-5（共有ページの send・型・storage のキーを共通に寄せ、mount を mount・setupStatus・setupAdding に分けた。速度の取得は「ダウンロード中のときだけ」の動きを残すため pollJd に寄せていない）を対応済み。typecheck・test（77件）・build は通っている。拡張機能での動作確認済み。main に取り込んだ。
+>
+> **対応状況（2026-11-25・9回目）**: 最後の小さなまとまりとして C-6（ダウンロード済みの記録を Service Worker の中に持ち、完了の取り込みでは1回で書く）、F-2（tsconfig.test.json でテストも型チェック。node:test の型は tests/node-test.d.ts に最小限だけ書いた）、D-8（タブは aria-current のリンクに、絞り込みに aria-pressed、ログに「注意」「エラー」の文字、共有ページの status に aria-live）、E-6、E-7 を対応済み。C-7・C-8・A-9・B-9・F-3 は、規模に対して効果が小さいので見送り。typecheck・test（77件）・build は通っている。拡張機能での動作確認はまだ。
 
 ## 1. 概要
 

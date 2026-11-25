@@ -5,7 +5,7 @@
 
 ## 準備（1回だけ）
 
-1. `E:\Tools\linkex-jd2\scripts` をユーザー環境変数の PATH に入れる（設定済み）
+1. このリポジトリの `scripts` フォルダ（例: `<このリポジトリ>\scripts`）を、ユーザー環境変数の PATH に入れる
 2. PowerShell を開き直す
 3. 「スクリプトを実行できません」と出たら、次を1回だけ実行する
 
@@ -18,7 +18,7 @@
 調べたいフォルダに移動して実行する。対象は **PowerShell で今いるフォルダ**。
 
 ```powershell
-cd D:\Downloads
+cd <調べたいフォルダ>
 fix-extensions.ps1            # 確認だけ（リネームしない）
 fix-extensions.ps1 -Apply     # 実際にリネームする
 ```
