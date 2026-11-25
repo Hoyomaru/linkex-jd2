@@ -208,7 +208,7 @@ async function cleanupLeftovers(items: QueueItem[]): Promise<number> {
   let count = 0;
   let bytes = 0;
   try {
-    const root = (await collectPages((page) => api.rootFiles(page))).map(unwrapFile);
+    const root = (await collectPages((page) => api.myFiles(undefined, page))).map(unwrapFile);
     for (const f of pickLeftovers(root, claimed, isFolder)) {
       if ((await readEngine()).paused) break;
       try {

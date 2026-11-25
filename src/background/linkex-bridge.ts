@@ -1,3 +1,5 @@
+import type { WalkedFile } from '../shared/walk';
+
 /**
  * Linkex Web版のページ内（MAIN world）で実行される関数。
  * chrome.scripting.executeScript で文字列化して送られるため、
@@ -19,13 +21,6 @@ export type BridgeResult =
   | { ok: true; data: unknown }
   | { ok: false; error: string; detail?: unknown; status?: number | null; authEntries?: [string, string][] };
 
-export interface WalkedFile {
-  id: string;
-  name: string;
-  size: number | null;
-  hash: string | null;
-  folders: string[];
-}
 
 export type WalkResult =
   | { ok: true; shareName: string; files: WalkedFile[]; requests: number }

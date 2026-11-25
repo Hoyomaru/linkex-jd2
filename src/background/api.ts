@@ -1,5 +1,6 @@
 import { judgeLogin } from '../shared/auth';
 import { describeError } from '../shared/error-text';
+import { bindLinkexApi } from '../shared/linkex-endpoints';
 import { isTransientLinkexFailure, mayRetryLinkex } from '../shared/linkex-transient';
 import { callLinkex, LinkexLoginError } from './linkex-tab';
 
@@ -56,39 +57,8 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
   return (env?.data ?? (env as unknown)) as T;
 }
 
-export const api = {
-  usage: () => call<{ totalSpace: number; usedSpace: number }>('get', '/api/drive/v1/usage'),
-  traffic: () => call<{ usedTraffic: number; totalTraffic: number; resetTime: number }>('get', '/api/drive/v1/traffic'),
-
-
-  copyFromShare: (token: string, fileId: string) =>
-    call<any>('post', '/api/drive/v1/file/copy', {
-      share_token: token,
-      collection: { select_all: false, file_ids: [fileId] },
-      async: true,
-    }),
-  task: (taskId: string) => call<any>('get', '/api/drive/v1/task/get', { task_id: taskId }),
-
-  rootFiles: (page: number) =>
-    call<any>('get', '/api/drive/v1/file/list', {
-      keyword: '',
-      page,
-      page_size: 100,
-      order: 'name',
-      desc: false,
-      need_parents: true,
-    }),
-  /** 共有のファイルの情報とダウンロードURL（自分のストレージに保存しなくても返る） */
-  shareFileGet: (token: string, fileId: string) =>
-    call<any>('get', '/api/drive/v1/file/get', { file_id: fileId, share_token: token }),
-  fileGet: (fileId: string) => call<any>('get', '/api/drive/v1/file/get', { file_id: fileId }),
-
-  // 安全のため、削除系は必ず1件ずつ・select_all:false で送る
-  moveToTrash: (fileId: string) =>
-    call<any>('post', '/api/drive/v1/file/delete', { collection: { select_all: false, file_ids: [fileId] } }),
-  trashList: (page: number) => call<any>('get', '/api/drive/v1/file/trash/list', { page, page_size: 100 }),
-  deleteForever: (fileId: string) => call<any>('post', '/api/drive/v1/file/trash/delete', { file_ids: [fileId] }),
-};
+/** Linkex API（呼び先の一覧は shared/linkex-endpoints.ts。固定タブの中で呼び、一時的な失敗は呼び直す） */
+export const api = bindLinkexApi(call);
 
 /** ページ送りしながら一覧を全部取る */
 export async function collectPages(fetchPage: (page: number) => Promise<any>, maxPages = 200): Promise<any[]> {

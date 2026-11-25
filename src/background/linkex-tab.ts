@@ -6,6 +6,7 @@ import {
   type WalkResult,
 } from './linkex-bridge';
 import { loadSettings } from '../shared/settings';
+import { WALK_PROGRESS_KEY, type WalkProgress } from '../shared/walk';
 import { logEvent } from './store';
 
 const DRIVE_URL = 'https://www.linkex.io/drive/all';
@@ -198,16 +199,6 @@ async function findOrOpenTab(): Promise<number> {
   return tab.id;
 }
 
-/** 共有を読んでいる途中の件数。画面（共有ページのパネル）が storage を見て表示する */
-export const WALK_PROGRESS_KEY = 'walkProgress';
-export interface WalkProgress {
-  /** tab: Linkexのタブを用意している / 省略: 読んでいる */
-  phase?: 'tab';
-  files: number;
-  bytes: number;
-  folders: number;
-  at: number;
-}
 
 /** 読み終えた共有はしばらく覚えておき、「選んで追加」→「追加」などで読み直さない */
 const WALK_CACHE_MS = 10 * 60_000;

@@ -13,7 +13,8 @@ import {
   type QueueGroup,
   type QueueItem,
 } from '../shared/queue';
-import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
+import type { TrafficInfo } from '../shared/estimate';
+import { bytesText, countText, etaText, leftText, overviewOf, percentHtml, renderEstimate } from '../ui/summary';
 import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 import { ArmedKeys, secondPress } from '../ui/confirm';
 import { IN_STORAGE_STATES } from '../shared/scheduler';
@@ -110,14 +111,7 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     addButton.textContent = '読み込み中…';
     showAddResult('共有の中身を読み込んでいます…', '');
     try {
-      const res = await send<{
-        added: number;
-        addedBytes: number;
-        alreadyQueued: number;
-        invalid: string[];
-        failed: { token: string; error: string }[];
-        elapsedMs: number;
-      }>({ type: 'queue.add', text: input.value });
+      const res = await send({ type: 'queue.add', text: input.value });
       if (!res.ok) throw new Error(res.error);
       const r = res.data;
       const parts = [r.added ? `${r.added}件（${formatBytes(r.addedBytes)}）を追加しました` : '追加はありません'];
@@ -259,16 +253,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     toggle.dataset.icon = view.paused ? 'play' : 'pause';
   }
 
-  function ourSpeed(): number {
-    let speed = 0;
-    for (const item of items) if (item.jdId) speed += progress.get(item.jdId)?.speed ?? 0;
-    return speed;
-  }
-
   function renderOverview() {
-    const completed = new Map<string, number>();
-    for (const [jdId, p] of progress) completed.set(jdId, p.completed);
-    const s = summarizeQueue(items, completed);
+    const s = overviewOf(items, progress);
 
     const empty = s.total === 0;
     $('ov-tiles').hidden = empty;
@@ -278,30 +264,21 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       $('ov-bytes').textContent = '';
       $('ov-bar').style.width = '0';
     } else {
-      const target = s.total - s.counts.skipped;
       const extra = [
         s.counts.skipped ? `省略 ${s.counts.skipped}` : '',
         s.counts.error ? `失敗 ${s.counts.error}` : '',
       ].filter(Boolean);
-      const pct = percent(s.bytesDone, s.bytesTotal);
-      $('ov-percent').innerHTML = `${Math.floor(pct)}<small>%</small>`;
-      $('ov-count').textContent = `${s.counts.done} / ${target}件 完了${extra.length ? `（${extra.join('・')}）` : ''}`;
-      $('ov-bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
-      $('ov-bar').style.width = `${pct}%`;
-      const speed = ourSpeed();
-      const downloading = items.filter((i) => i.state === 'downloading').length;
-      $('ov-speed').textContent = downloading ? `${downloading}件・${formatSpeed(speed)}` : '-';
-      $('ov-left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
-      $('ov-eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
+      $('ov-percent').innerHTML = percentHtml(s);
+      $('ov-count').textContent = `${countText(s)}${extra.length ? `（${extra.join('・')}）` : ''}`;
+      $('ov-bytes').textContent = bytesText(s);
+      $('ov-bar').style.width = `${s.pct}%`;
+      // 専用ページは、何件分の速度かも添える
+      $('ov-speed').textContent = s.downloading ? `${s.downloading}件・${formatSpeed(s.speed)}` : '-';
+      $('ov-left').textContent = leftText(s);
+      $('ov-eta').textContent = etaText(s);
     }
 
-    const est = estimateRemaining(items, s, traffic);
-    const estBox = $('ov-estimate');
-    estBox.hidden = est.files === 0;
-    const line = estimateTrafficLine(est);
-    estBox.className = `estimate ${line.kind === 'muted' ? '' : line.kind}`;
-    $('ov-est-headline').textContent = estimateHeadline(est);
-    $('ov-est-traffic').textContent = line.text;
+    renderEstimate({ box: $('ov-estimate'), headline: $('ov-est-headline'), traffic: $('ov-est-traffic') }, items, s, traffic);
 
     const badge = $('tab-badge-error');
     badge.hidden = s.counts.error === 0;

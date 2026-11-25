@@ -2,19 +2,11 @@ import { describeError } from '../shared/error-text';
 import { relDirFor, sanitizeName, savePathKey, singleTopFolder, withNumber } from '../shared/files';
 import type { QueueItem } from '../shared/queue';
 import { parseShareTokens } from '../shared/share-url';
-import type { WalkedFile } from './linkex-bridge';
+import type { AddFilesResult, EnqueueResult } from '../shared/messages';
+import type { WalkedFile } from '../shared/walk';
 import { walkShareInTab } from './linkex-tab';
 import { mutateQueue } from './store';
 
-export interface EnqueueResult {
-  added: number;
-  /** 追加したファイルの合計バイト数（サイズ不明は0として数える） */
-  addedBytes: number;
-  alreadyQueued: number;
-  invalid: string[];
-  failed: { token: string; error: string }[];
-  elapsedMs: number;
-}
 
 export interface WalkedShare {
   token: string;
@@ -59,7 +51,7 @@ export async function enqueueShares(text: string, pageTabId?: number): Promise<E
 }
 
 /** 読み終わった共有のファイル（全部または選んだ分）をキューに追加する */
-export async function addWalkedToQueue(shares: WalkedShare[]): Promise<{ added: number; addedBytes: number; alreadyQueued: number }> {
+export async function addWalkedToQueue(shares: WalkedShare[]): Promise<AddFilesResult> {
   const counts = { added: 0, addedBytes: 0, alreadyQueued: 0 };
   await mutateQueue((items) => {
     const now = Date.now();

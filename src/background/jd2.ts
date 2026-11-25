@@ -1,4 +1,5 @@
 import { directHttpLink } from '../shared/jd2-status';
+import type { JdInfo } from '../shared/messages';
 import { requestJd, type RequestOptions } from '../shared/jd2-request';
 import { loadSettings } from '../shared/settings';
 
@@ -57,14 +58,6 @@ async function defaultFolder(): Promise<string> {
   return folder;
 }
 
-/** 接続テストで見せる、JD2の同時ダウンロードの設定（読めなかった項目は null） */
-export interface JdInfo {
-  version: number;
-  maxDownloads: number | null;
-  perHostEnabled: boolean | null;
-  perHost: number | null;
-  chunks: number | null;
-}
 
 export async function getInfo(): Promise<JdInfo> {
   const version = await getVersion();

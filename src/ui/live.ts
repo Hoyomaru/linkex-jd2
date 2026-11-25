@@ -20,7 +20,7 @@ export function pollJd(
   const tick = async () => {
     if (stopped) return;
     if (document.visibilityState === 'visible') {
-      const res = await send<JdLive>({ type: 'jd.active' });
+      const res = await send({ type: 'jd.active' });
       if (stopped) return;
       if (res.ok) onData(res.data);
       else onData(null, res.error);

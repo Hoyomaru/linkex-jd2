@@ -1,9 +1,9 @@
 import { send } from '../shared/messages';
 import { formatBytes, isFolder, linkexApi, unwrapFile } from '../shared/linkex-api';
-import type { JdInfo } from '../background/jd2';
 import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
+import { setMeter } from '../ui/summary';
 import { secondPress } from '../ui/confirm';
 import { HASHES_KEY } from '../shared/queue';
 
@@ -95,23 +95,17 @@ window.addEventListener('hashchange', showTab);
 showTab();
 
 // ---------- Linkex の状態 ----------
-function setMeter(barId: string, used: number, total: number) {
-  const ratio = total > 0 ? used / total : 0;
-  const bar = $(barId);
-  bar.style.width = `${Math.min(100, ratio * 100)}%`;
-  bar.parentElement!.className = `meter${ratio >= 1 ? ' ng' : ratio >= 0.8 ? ' warn' : ''}`;
-}
 
 async function refreshLinkex() {
   try {
     const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
     $('usage-text').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
-    setMeter('usage-bar', usage.usedSpace, usage.totalSpace);
+    setMeter($('usage-bar'), usage.usedSpace, usage.totalSpace);
     const reset = traffic.resetTime ? new Date(traffic.resetTime * 1000).toLocaleString() : '-';
     $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
     queueView.setTraffic(traffic);
     $('traffic-metric').title = `直近24時間の転送量（目安）。リセット ${reset}`;
-    setMeter('traffic-bar', traffic.usedTraffic, traffic.totalTraffic);
+    setMeter($('traffic-bar'), traffic.usedTraffic, traffic.totalTraffic);
   } catch (e) {
     $('usage-text').textContent = '取得できません';
     $('usage-text').title = (e as Error).message;
@@ -132,7 +126,7 @@ action($('jd-test'), async () => {
   el.className = 'muted';
   // 入力中（未保存）の設定ではなく、保存済みの設定で試す。書き換えて保存していなければ、そう添える
   const unsaved = formDirty ? '（保存済みの設定で試しました。変えた接続先は「保存」を押すと使われます）' : '';
-  const res = await send<JdInfo>({ type: 'jd.info' });
+  const res = await send({ type: 'jd.info' });
   if (res.ok) {
     const j = res.data;
     const num = (n: number | null) => (n === null ? '?' : String(n));
@@ -170,7 +164,7 @@ function clampField(form: HTMLFormElement, name: string, label: string, min: num
 }
 
 async function loadSettingsIntoForm() {
-  const res = await send<Settings>({ type: 'settings.get' });
+  const res = await send({ type: 'settings.get' });
   if (!res.ok) return log(`設定の読み込みに失敗: ${res.error}`);
   const s = res.data;
   (form.elements.namedItem('jdUrl') as HTMLInputElement).value = s.jdUrl;
@@ -321,7 +315,7 @@ async function issueUrl(fileId: string, name: string): Promise<string> {
 
 async function sendToJd(fileId: string, name: string) {
   const url = await issueUrl(fileId, name);
-  const res = await send<string>({ type: 'jd.add', url, out: name });
+  const res = await send({ type: 'jd.add', url, out: name });
   if (!res.ok) throw new Error(res.error);
   log(`JD2に追加しました: ${name}（ID ${res.data}）`);
 }
@@ -336,7 +330,7 @@ function renderUrls() {
     tr.cells[2].textContent = u.result;
     tr.cells[3].append(
       makeButton('まだ使えるか確認', async () => {
-        const res = await send<{ status: number; contentRange: string | null }>({ type: 'cdn.probe', url: u.url });
+        const res = await send({ type: 'cdn.probe', url: u.url });
         const elapsed = Math.round((Date.now() - u.issuedAt) / 1000);
         u.result = res.ok ? `HTTP ${res.data.status}（発行から${elapsed}秒）` : `失敗: ${res.error}`;
         log(`URL確認: ${u.name}`, u.result);

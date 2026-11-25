@@ -1,9 +1,10 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
-import { estimateHeadline, estimateRemaining, estimateTrafficLine, type TrafficInfo } from '../shared/estimate';
+import { type TrafficInfo } from '../shared/estimate';
+import { bytesText, countChips, countText, etaText, leftText, overviewOf, percentHtml, renderEstimate, setMeter, speedText } from '../ui/summary';
 import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
-import { ENGINE_KEY, GROUP_OF, QUEUE_KEY, STATE_LABELS, summarizeQueue, type EngineState, type QueueItem } from '../shared/queue';
+import { ENGINE_KEY, GROUP_OF, QUEUE_KEY, STATE_LABELS, type EngineState, type QueueItem } from '../shared/queue';
 import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -48,7 +49,7 @@ async function addUrls(text: string, button: HTMLButtonElement, label: string): 
   button.textContent = '読み込み中…';
   showResult('共有の中身を読み込んでいます…', 'muted');
   try {
-    const res = await send<{ added: number; addedBytes: number; alreadyQueued: number; invalid: string[]; failed: { token: string; error: string }[] }>({
+    const res = await send({
       type: 'queue.add',
       text,
     });
@@ -216,11 +217,8 @@ function render() {
   $('toggle').dataset.icon = view.paused ? 'play' : 'pause';
   $('toggle').className = view.paused ? 'primary' : '';
 
-  const completed = new Map<string, number>();
-  for (const [jdId, p] of progress) completed.set(jdId, p.completed);
-  const s = summarizeQueue(items, completed);
+  const s = overviewOf(items, progress);
   const empty = s.total === 0;
-  const pct = percent(s.bytesDone, s.bytesTotal);
   $('hero').classList.toggle('empty', empty);
   $('tiles').hidden = empty;
   $('counts').hidden = empty;
@@ -229,49 +227,21 @@ function render() {
     $('count').textContent = '';
     $('bytes').textContent = '';
   } else {
-    $('percent').innerHTML = `${Math.floor(pct)}<small>%</small>`;
-    $('count').textContent = `${s.counts.done} / ${s.total - s.counts.skipped}件 完了`;
-    $('bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
+    $('percent').innerHTML = percentHtml(s);
+    $('count').textContent = countText(s);
+    $('bytes').textContent = bytesText(s);
   }
-  $('bar').style.width = `${pct}%`;
-  $('bar-wrap').setAttribute('aria-valuenow', String(Math.floor(pct)));
+  $('bar').style.width = `${s.pct}%`;
+  $('bar-wrap').setAttribute('aria-valuenow', String(Math.floor(s.pct)));
 
-  let speed = 0;
-  for (const item of items) if (item.jdId) speed += progress.get(item.jdId)?.speed ?? 0;
-  $('speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
-  $('left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
-  $('eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
-
-  const chip = (cls: string, label: string, n: number, link = false) => {
-    const e = document.createElement(link ? 'a' : 'span');
-    e.className = cls;
-    if (link) {
-      (e as HTMLAnchorElement).href = '#';
-      e.title = '専用ページで確認';
-    }
-    e.append(`${label} `);
-    const b = document.createElement('b');
-    b.textContent = String(n);
-    e.append(b);
-    return e;
-  };
-  const chips = [
-    s.counts.active ? chip('c-active', '処理中', s.counts.active) : null,
-    s.counts.waiting ? chip('c-waiting', '待ち', s.counts.waiting) : null,
-    chip('c-done', '完了', s.counts.done),
-    s.counts.skipped ? chip('c-skipped', '省略', s.counts.skipped) : null,
-    s.counts.error ? chip('c-error', '失敗', s.counts.error, true) : null,
-  ].filter((c): c is HTMLElement => c !== null);
-  $('counts').replaceChildren(...chips);
+  $('speed').textContent = speedText(s);
+  $('left').textContent = leftText(s);
+  $('eta').textContent = etaText(s);
+  // 失敗の札は押すと専用ページを開く（#counts へのクリックで受ける）
+  $('counts').replaceChildren(...countChips(s.counts, true));
 
   // 見積もり
-  const est = estimateRemaining(items, s, traffic);
-  const estBox = $('estimate');
-  estBox.hidden = est.files === 0;
-  const line = estimateTrafficLine(est);
-  estBox.className = `estimate ${line.kind === 'muted' ? '' : line.kind}`;
-  $('est-headline').textContent = estimateHeadline(est);
-  $('est-traffic').textContent = line.text;
+  renderEstimate({ box: $('estimate'), headline: $('est-headline'), traffic: $('est-traffic') }, items, s, traffic);
 
   // 今動いているファイル（ポップアップの高さに収めるため最大2件。全体の件数は「処理中」に出る）
   const allActive = items.filter((i) => GROUP_OF[i.state] === 'active');
@@ -337,12 +307,6 @@ pollJd((live, error) => {
   render();
 });
 
-function setMeter(barId: string, used: number, total: number) {
-  const ratio = total > 0 ? used / total : 0;
-  const bar = $(barId);
-  bar.style.width = `${Math.min(100, ratio * 100)}%`;
-  bar.parentElement!.className = `meter${ratio >= 1 ? ' ng' : ratio >= 0.8 ? ' warn' : ''}`;
-}
 
 (async () => {
   try {
@@ -350,9 +314,9 @@ function setMeter(barId: string, used: number, total: number) {
     traffic = t;
     render();
     $('usage').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
-    setMeter('usage-bar', usage.usedSpace, usage.totalSpace);
+    setMeter($('usage-bar'), usage.usedSpace, usage.totalSpace);
     $('traffic').textContent = `${formatBytes(t.usedTraffic)} / ${formatBytes(t.totalTraffic)}`;
-    setMeter('traffic-bar', t.usedTraffic, t.totalTraffic);
+    setMeter($('traffic-bar'), t.usedTraffic, t.totalTraffic);
   } catch (e) {
     $('usage').textContent = '取得できません';
     $('usage').title = (e as Error).message;

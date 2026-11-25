@@ -12,7 +12,9 @@
 >
 > **対応状況（2026-11-25・6回目）**: 小さな片付けの E-5（docs/superpowers を private/ に移し .gitignore に追加）、B-4（IN_STORAGE_STATES に一本化）、A-6、A-7、A-8（C-9 の Set による引き当ても一緒に）、B-8（jd.version・api.share・api.shareContent を削除、ファイル内だけで使う export を外した。Motrix 版からの移行処理は残した）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認済み。main に取り込んだ。
 >
-> **対応状況（2026-11-25・7回目）**: C-2（Service Worker の中にキューを持ち、書き換えは写しに対して行って保存できてから入れ替える。続けて起きる更新の1回化と、バッジの newValue 利用は未対応）、C-5（logEvents でまとめて書く）、D-7（作り直した後もフォーカスを戻す。行ごとの差し替えは未対応）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認はまだ。
+> **対応状況（2026-11-25・7回目）**: C-2（Service Worker の中にキューを持ち、書き換えは写しに対して行って保存できてから入れ替える。続けて起きる更新の1回化と、バッジの newValue 利用は未対応）、C-5（logEvents でまとめて書く）、D-7（作り直した後もフォーカスを戻す。行ごとの差し替えは未対応）を対応済み。typecheck と test（73件）は通っている。拡張機能での動作確認済み。main に取り込んだ。
+>
+> **対応状況（2026-11-25・8回目）**: 重複をまとめる B-7（messages.ts の ResponseMap と、background/index.ts の型付きの受け持ち表）、B-3（shared/linkex-endpoints.ts に呼び先を一本化）、B-6（ui/summary.ts）、B-5（共有ページの send・型・storage のキーを共通に寄せ、mount を mount・setupStatus・setupAdding に分けた。速度の取得は「ダウンロード中のときだけ」の動きを残すため pollJd に寄せていない）を対応済み。typecheck・test（77件）・build は通っている。拡張機能での動作確認はまだ。
 
 ## 1. 概要
 

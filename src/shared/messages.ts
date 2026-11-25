@@ -1,7 +1,8 @@
 import { describeError } from './error-text';
 import type { Settings } from './settings';
+import type { WalkedFile } from './walk';
 
-/** 画面（専用ページ・ポップアップ）から Service Worker へ送るメッセージ */
+/** 画面（専用ページ・ポップアップ・共有ページのパネル）から Service Worker へ送るメッセージ */
 export type Request =
   | { type: 'linkex.call'; method: 'get' | 'post'; path: string; params?: unknown; data?: unknown }
   | { type: 'linkex.openTab' }
@@ -15,7 +16,7 @@ export type Request =
       type: 'queue.addFiles';
       token: string;
       shareName: string;
-      files: { id: string; name: string; size: number | null; hash: string | null; folders: string[] }[];
+      files: WalkedFile[];
       /** 共有全体が1つのフォルダの下にあるなら true（共有名の段を飛ばして保存する） */
       collapseRoot?: boolean;
     }
@@ -32,10 +33,44 @@ export type Request =
   | { type: 'settings.get' }
   | { type: 'settings.set'; patch: Partial<Settings> };
 
+/**
+ * メッセージごとの応答の中身。Service Worker（background/index.ts の handle）はこれに合わせて返し、
+ * 画面は send の戻り値としてこの型で受け取る（呼ぶ側で書き写さない）
+ */
+export interface ResponseMap {
+  /** Linkex の応答そのまま（形は呼ぶ側の linkexApi が決める） */
+  'linkex.call': unknown;
+  /** Linkex の固定タブのID */
+  'linkex.openTab': number;
+  'jd.info': JdInfo;
+  /** JD2 の一覧でのリンクのID */
+  'jd.add': string;
+  'jd.active': JdLive;
+  'cdn.probe': { status: number; contentRange: string | null };
+  'queue.add': EnqueueResult;
+  'share.walk': { shareName: string; files: WalkedFile[] };
+  'queue.addFiles': AddFilesResult;
+  'dashboard.open': true;
+  'events.clear': void;
+  'hashes.clear': void;
+  'queue.start': void;
+  'queue.pause': void;
+  'queue.retry': void;
+  /** 外した件数 */
+  'queue.remove': number;
+  'queue.removeMany': number;
+  /** 再試行に戻した件数 */
+  'queue.retryFailed': number;
+  'queue.clearFinished': void;
+  'settings.get': Settings;
+  'settings.set': Settings;
+}
+
 export type Response<T = unknown> = { ok: true; data: T } | { ok: false; error: string; detail?: unknown };
 
 /** 画面に返すエラーは、内部の印のままにせず、原因と対処がわかる文にする */
-export async function send<T = unknown>(request: Request): Promise<Response<T>> {
+export async function send<R extends Request>(request: R): Promise<Response<ResponseMap[R['type']]>> {
+  type T = ResponseMap[R['type']];
   try {
     const res = (await chrome.runtime.sendMessage(request)) as Response<T> | undefined;
     if (!res) return { ok: false, error: describeError('no_response') };
@@ -43,6 +78,32 @@ export async function send<T = unknown>(request: Request): Promise<Response<T>> 
   } catch (e) {
     return { ok: false, error: describeError(String((e as Error)?.message ?? e)) };
   }
+}
+
+/** queue.addFiles の応答 */
+export interface AddFilesResult {
+  added: number;
+  /** 追加したファイルの合計バイト数（サイズ不明は0として数える） */
+  addedBytes: number;
+  alreadyQueued: number;
+}
+
+/** queue.add（共有URLを読んでキューに追加）の応答 */
+export interface EnqueueResult extends AddFilesResult {
+  /** 共有URLとして読めなかった行 */
+  invalid: string[];
+  /** 開けなかった共有（error は原因と対処がわかる文） */
+  failed: { token: string; error: string }[];
+  elapsedMs: number;
+}
+
+/** 接続テストで見せる、JD2の同時ダウンロードの設定（読めなかった項目は null） */
+export interface JdInfo {
+  version: number;
+  maxDownloads: number | null;
+  perHostEnabled: boolean | null;
+  perHost: number | null;
+  chunks: number | null;
 }
 
 /** Linkex APIの共通応答。code 0 が成功 */

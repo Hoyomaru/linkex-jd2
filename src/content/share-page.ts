@@ -3,48 +3,22 @@
  * ページのデザインに影響しないよう、Shadow DOM の中に描く。
  * このファイルは単体のスクリプトとしてビルドする（vite.content.config.ts）。
  */
-import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
-import type { JdLive, Response } from '../shared/messages';
+import { formatBytes } from '../shared/format';
 import {
   ENGINE_KEY,
   GROUP_OF,
   QUEUE_KEY,
   STATE_LABELS,
-  summarizeQueue,
   type EngineState,
   type QueueItem,
 } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
 import { matchesQuery, singleTopFolder } from '../shared/files';
 import { engineView } from '../ui/live';
-import { describeError } from '../shared/error-text';
+import { bytesText, countChips, countText, etaText, leftText, overviewOf, percentHtml, speedText } from '../ui/summary';
+import { send } from '../shared/messages';
+import { WALK_PROGRESS_KEY, type WalkedFile, type WalkProgress } from '../shared/walk';
 
-interface WalkProgress {
-  phase?: 'tab';
-  files: number;
-  bytes: number;
-  folders: number;
-}
-
-interface WalkedFile {
-  id: string;
-  name: string;
-  size: number | null;
-  hash: string | null;
-  folders: string[];
-}
-
-/** 画面に返すエラーは、内部の印のままにせず、原因と対処がわかる文にする */
-function send<T>(message: unknown): Promise<Response<T>> {
-  return chrome.runtime
-    .sendMessage(message)
-    .then((raw): Response<T> => {
-      const res = raw as Response<T> | undefined;
-      if (!res) return { ok: false, error: describeError('no_response') };
-      return res.ok ? res : { ...res, error: describeError(res.error) };
-    })
-    .catch((e) => ({ ok: false as const, error: describeError(String(e?.message ?? e)) }));
-}
 
 const LOGO = `<svg viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="lm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2ab880"/><stop offset="1" stop-color="#168258"/></linearGradient></defs><rect width="128" height="128" rx="28" fill="url(#lm-g)"/><g fill="#fff"><rect x="54" y="20" width="20" height="46"/><polygon points="30,58 98,58 64,94"/><rect x="28" y="100" width="72" height="12" rx="6"/></g></svg>`;
 
@@ -172,6 +146,20 @@ button[data-icon="pause"]::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 1
 .pick-actions .primary { flex: 1; }
 `;
 
+/** パネルの部品どうしで使う、共通の道具 */
+interface PanelContext {
+  token: string;
+  q: <T extends HTMLElement = HTMLElement>(sel: string) => T;
+  setStatus: (text: string, kind?: '' | 'ok' | 'ng') => void;
+  /** ボタンを押している間は無効にして、失敗はパネルに出す */
+  busy: (button: HTMLButtonElement, fn: () => Promise<void>) => Promise<void>;
+}
+
+/**
+ * 共有ページにパネルを付ける。中身は役割ごとに分けてある:
+ * - setupStatus: 全体の状態（実行中・停止中）と、このリンクの進み具合
+ * - setupAdding: 全部キューに追加・選んで追加
+ */
 function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const host = document.createElement('div');
   host.id = 'linkex-jd2-panel';
@@ -232,16 +220,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const panel = q<HTMLDivElement>('.panel');
   const body = q<HTMLDivElement>('.body');
   const status = q<HTMLDivElement>('.status');
-  const list = q<HTMLDivElement>('.list');
-  const pickActions = q<HTMLDivElement>('.pick-actions');
-  const pickHead = q<HTMLDivElement>('.pick-head');
-  const autostart = q<HTMLInputElement>('[data-act="autostart"]');
-  const selectAll = q<HTMLInputElement>('[data-act="select-all"]');
-  const search = q<HTMLInputElement>('.search');
   const mini = q<HTMLSpanElement>('.head .mini');
-  let walked: { shareName: string; files: WalkedFile[] } | null = null;
-  /** このリンクのファイルで、キューに入っているもの（共有側のID → 件） */
-  let queued = new Map<string, QueueItem>();
 
   const setStatus = (text: string, kind: '' | 'ok' | 'ng' = '') => {
     status.textContent = text;
@@ -258,19 +237,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       button.disabled = false;
     }
   };
-
-  const afterAdd = async (added: number, addedBytes: number, already: number) => {
-    let text = `${added}件（${formatBytes(addedBytes)}）をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
-    if (added === 0 && already > 0) text = `すべてキューに入っています（${already}件）`;
-    let ok = true;
-    if (autostart.checked && added > 0) {
-      const res = await send({ type: 'queue.start' });
-      text += res.ok ? '。処理を開始しました' : `。開始できませんでした: ${res.error}`;
-      ok = res.ok;
-    }
-    // 追加はできても、開始できなかったら気づけるよう赤で出す
-    setStatus(text, ok ? 'ok' : 'ng');
-  };
+  const ctx: PanelContext = { token, q, setStatus, busy };
 
   // ---------- 小さくする（状態は覚えておく） ----------
   const collapseButton = q<HTMLButtonElement>('[data-act="collapse"]');
@@ -290,14 +257,46 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   });
   void chrome.storage.local.get('panelCollapsed').then((v) => setCollapsed(v.panelCollapsed === true));
 
-  // ---------- この共有の大きさ ----------
-  const showShareSize = (files: WalkedFile[]) => {
-    const bytes = files.reduce((sum, f) => sum + (f.size ?? 0), 0);
-    const unknown = files.filter((f) => f.size == null).length;
-    q('.share-size').textContent = `${files.length.toLocaleString()}件・${formatBytes(bytes)}${unknown ? `（不明 ${unknown}件）` : ''}`;
-    q('.share').hidden = false;
-  };
+  const statusView = setupStatus(ctx, isCollapsed);
+  const adding = setupAdding(ctx);
 
+  const onQueue = (all: QueueItem[]) => {
+    statusView.setQueue(all);
+    adding.setQueue(all);
+  };
+  void chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]).then((v) => {
+    statusView.setEngine(v[ENGINE_KEY] as EngineState | undefined);
+    onQueue((v[QUEUE_KEY] as QueueItem[] | undefined) ?? []);
+  });
+  const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (area !== 'local') return;
+    if (changes[QUEUE_KEY]) onQueue((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
+    if (changes[ENGINE_KEY]) statusView.setEngine(changes[ENGINE_KEY].newValue as EngineState | undefined);
+    if (changes[WALK_PROGRESS_KEY]) {
+      adding.onWalkProgress((changes[WALK_PROGRESS_KEY].newValue as Record<string, WalkProgress> | undefined)?.[token]);
+    }
+  };
+  chrome.storage.onChanged.addListener(onStorage);
+
+  q<HTMLButtonElement>('[data-act="dashboard"]').addEventListener('click', () => {
+    void send({ type: 'dashboard.open' });
+  });
+
+  return {
+    host,
+    dispose: () => {
+      chrome.storage.onChanged.removeListener(onStorage);
+      statusView.dispose();
+    },
+  };
+}
+
+/** 全体の状態（実行中・停止中）と、このリンクの進み具合 */
+function setupStatus(
+  { token, q, busy }: PanelContext,
+  isCollapsed: () => boolean,
+): { setEngine: (engine: EngineState | undefined) => void; setQueue: (all: QueueItem[]) => void; dispose: () => void } {
+  const mini = q<HTMLSpanElement>('.head .mini');
   // ---------- 全体の状態（実行中・停止中） ----------
   let engine: EngineState | undefined;
   const toggleButton = q<HTMLButtonElement>('[data-act="toggle"]');
@@ -323,15 +322,6 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   /** JD2から取った今の進み具合（jdId → 取得済みバイト・速度） */
   let live = new Map<string, { completed: number; speed: number }>();
 
-  const chip = (cls: string, label: string, n: number) => {
-    const e = document.createElement('span');
-    e.className = cls;
-    const b = document.createElement('b');
-    b.textContent = String(n);
-    e.append(`${label} `, b);
-    return e;
-  };
-
   const renderProgress = () => {
     const box = q<HTMLDivElement>('.progress');
     box.hidden = mine.length === 0;
@@ -341,43 +331,29 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       mini.hidden = true;
       return;
     }
-    const completed = new Map([...live].map(([jdId, p]) => [jdId, p.completed]));
-    const s = summarizeQueue(mine, completed);
-    const target = mine.length - s.counts.skipped;
-    const pct = percent(s.bytesDone, s.bytesTotal);
-    q('.p-pct').innerHTML = `${Math.floor(pct)}<small>%</small>`;
-    q('.p-count').textContent = `${s.counts.done} / ${target}件 完了`;
-    q('.p-bytes').textContent = `${formatBytes(s.bytesDone)} / ${formatBytes(s.bytesTotal)}`;
-    q('.p-bar').style.width = `${pct}%`;
+    const s = overviewOf(mine, live);
+    q('.p-pct').innerHTML = percentHtml(s);
+    q('.p-count').textContent = countText(s);
+    q('.p-bytes').textContent = bytesText(s);
+    q('.p-bar').style.width = `${s.pct}%`;
 
-    let speed = 0;
-    for (const item of mine) if (item.jdId) speed += live.get(item.jdId)?.speed ?? 0;
     const busyNow = s.counts.active + s.counts.waiting > 0;
     q('.tiles').hidden = !busyNow;
-    q('.t-speed').textContent = speed > 0 ? formatSpeed(speed) : '-';
-    q('.t-left').textContent = s.bytesRemaining > 0 ? formatBytes(s.bytesRemaining) : '-';
-    q('.t-eta').textContent = s.bytesRemaining > 0 && speed > 0 ? formatEta(s.bytesRemaining, speed) : '-';
+    q('.t-speed').textContent = speedText(s);
+    q('.t-left').textContent = leftText(s);
+    q('.t-eta').textContent = etaText(s);
+    q('.counts').replaceChildren(...countChips(s.counts));
 
-    q('.counts').replaceChildren(
-      ...[
-        s.counts.active ? chip('c-active', '処理中', s.counts.active) : null,
-        s.counts.waiting ? chip('c-waiting', '待ち', s.counts.waiting) : null,
-        chip('c-done', '完了', s.counts.done),
-        s.counts.skipped ? chip('c-skipped', '省略', s.counts.skipped) : null,
-        s.counts.error ? chip('c-error', '失敗', s.counts.error) : null,
-      ].filter((c): c is HTMLSpanElement => c !== null),
-    );
-
-    q('.mini-text').textContent = `${Math.floor(pct)}%・${s.counts.done}/${target}`;
-    q<HTMLSpanElement>('.ring').style.setProperty('--p', `${pct}%`);
+    q('.mini-text').textContent = `${Math.floor(s.pct)}%・${s.counts.done}/${s.target}`;
+    q<HTMLSpanElement>('.ring').style.setProperty('--p', `${s.pct}%`);
     mini.hidden = !isCollapsed();
   };
 
-  const onQueue = (all: QueueItem[]) => {
+  const setQueue = (all: QueueItem[]) => {
     mine = all.filter((i) => i.shareToken === token);
-    queued = new Map(mine.map((i) => [i.sourceFileId, i]));
-    if (walked && !list.hidden) markQueued();
     renderProgress();
+    // 一時停止中の文（JD2 に渡した件数）は、このリンクの件から数える
+    renderEngine();
   };
 
   // ダウンロード中のファイルがあり、ページが見えているときだけ、JD2に速度を聞きに行く
@@ -389,32 +365,59 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
       }
       return;
     }
-    const res = await send<JdLive>({ type: 'jd.active' });
+    const res = await send({ type: 'jd.active' });
     live = new Map(
       res.ok ? res.data.active.map((a) => [a.jdId, { completed: a.completedLength, speed: a.downloadSpeed }]) : [],
     );
     renderProgress();
   }, 1500);
 
-  void chrome.storage.local.get([QUEUE_KEY, ENGINE_KEY]).then((v) => {
-    engine = v[ENGINE_KEY] as EngineState | undefined;
-    renderEngine();
-    onQueue((v[QUEUE_KEY] as QueueItem[] | undefined) ?? []);
-  });
-  const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-    if (area !== 'local') return;
-    if (changes[QUEUE_KEY]) onQueue((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
-    if (changes[ENGINE_KEY]) {
-      engine = changes[ENGINE_KEY].newValue as EngineState | undefined;
+  return {
+    setEngine: (next) => {
+      engine = next;
       renderEngine();
-    }
-    if (changes.walkProgress && loading) {
-      const p = (changes.walkProgress.newValue as Record<string, WalkProgress> | undefined)?.[token];
-      if (p?.phase === 'tab') setStatus('Linkexのタブを準備中…');
-      else if (p) setStatus(`共有の中身を読み込み中… ${p.files.toLocaleString()}件・${formatBytes(p.bytes)}（フォルダ ${p.folders}）`);
-    }
+    },
+    setQueue,
+    dispose: () => clearInterval(speedTimer),
   };
-  chrome.storage.onChanged.addListener(onStorage);
+}
+
+/** 全部キューに追加・選んで追加 */
+function setupAdding({ token, q, setStatus, busy }: PanelContext): {
+  setQueue: (all: QueueItem[]) => void;
+  /** 共有を読んでいる途中の件数（読んでいる最中だけ表示する） */
+  onWalkProgress: (p: WalkProgress | undefined) => void;
+} {
+  const list = q<HTMLDivElement>('.list');
+  const pickActions = q<HTMLDivElement>('.pick-actions');
+  const pickHead = q<HTMLDivElement>('.pick-head');
+  const autostart = q<HTMLInputElement>('[data-act="autostart"]');
+  const selectAll = q<HTMLInputElement>('[data-act="select-all"]');
+  const search = q<HTMLInputElement>('.search');
+  let walked: { shareName: string; files: WalkedFile[] } | null = null;
+  /** このリンクのファイルで、キューに入っているもの（共有側のID → 件） */
+  let queued = new Map<string, QueueItem>();
+
+  const afterAdd = async (added: number, addedBytes: number, already: number) => {
+    let text = `${added}件（${formatBytes(addedBytes)}）をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
+    if (added === 0 && already > 0) text = `すべてキューに入っています（${already}件）`;
+    let ok = true;
+    if (autostart.checked && added > 0) {
+      const res = await send({ type: 'queue.start' });
+      text += res.ok ? '。処理を開始しました' : `。開始できませんでした: ${res.error}`;
+      ok = res.ok;
+    }
+    // 追加はできても、開始できなかったら気づけるよう赤で出す
+    setStatus(text, ok ? 'ok' : 'ng');
+  };
+
+  // ---------- この共有の大きさ ----------
+  const showShareSize = (files: WalkedFile[]) => {
+    const bytes = files.reduce((sum, f) => sum + (f.size ?? 0), 0);
+    const unknown = files.filter((f) => f.size == null).length;
+    q('.share-size').textContent = `${files.length.toLocaleString()}件・${formatBytes(bytes)}${unknown ? `（不明 ${unknown}件）` : ''}`;
+    q('.share').hidden = false;
+  };
 
   // ---------- 共有の中身を読む ----------
   /** 読み込み中か（途中経過を表示するため） */
@@ -424,7 +427,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   const prefetch = () => {
     if (prefetched) return;
     prefetched = true;
-    void send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token }).then((res) => {
+    void send({ type: 'share.walk', token }).then((res) => {
       if (res.ok) showShareSize(res.data.files);
       else prefetched = false;
     });
@@ -523,7 +526,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     busy(allButton, async () => {
       closePick();
       const res = await withLoading(() =>
-        send<{ added: number; addedBytes: number; alreadyQueued: number; failed: { error: string }[] }>({
+        send({
           type: 'queue.add',
           text: token,
         }),
@@ -541,7 +544,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
   }
   pickButton.addEventListener('click', () =>
     busy(pickButton, async () => {
-      const res = await withLoading(() => send<{ shareName: string; files: WalkedFile[] }>({ type: 'share.walk', token }));
+      const res = await withLoading(() => send({ type: 'share.walk', token }));
       if (!res.ok) throw new Error(res.error);
       walked = res.data;
       showShareSize(walked.files);
@@ -605,7 +608,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
         .map((b) => walked!.files[Number(b.dataset.index)])
         .filter(Boolean);
       if (files.length === 0) throw new Error('ファイルが選ばれていません');
-      const res = await send<{ added: number; addedBytes: number; alreadyQueued: number }>({
+      const res = await send({
         type: 'queue.addFiles',
         token,
         shareName: walked.shareName,
@@ -619,15 +622,15 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     }),
   );
 
-  q<HTMLButtonElement>('[data-act="dashboard"]').addEventListener('click', () => {
-    void send({ type: 'dashboard.open' });
-  });
-
   return {
-    host,
-    dispose: () => {
-      chrome.storage.onChanged.removeListener(onStorage);
-      clearInterval(speedTimer);
+    setQueue: (all) => {
+      queued = new Map(all.filter((i) => i.shareToken === token).map((i) => [i.sourceFileId, i]));
+      if (walked && !list.hidden) markQueued();
+    },
+    onWalkProgress: (p) => {
+      if (!loading) return;
+      if (p?.phase === 'tab') setStatus('Linkexのタブを準備中…');
+      else if (p) setStatus(`共有の中身を読み込み中… ${p.files.toLocaleString()}件・${formatBytes(p.bytes)}（フォルダ ${p.folders}）`);
     },
   };
 }

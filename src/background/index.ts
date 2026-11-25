@@ -1,4 +1,4 @@
-import type { JdLive, Request, Response } from '../shared/messages';
+import type { Request, Response, ResponseMap } from '../shared/messages';
 import { FINISHED_STATES, type QueueItem } from '../shared/queue';
 import { IN_STORAGE_STATES } from '../shared/scheduler';
 import { loadSettings, saveSettings } from '../shared/settings';
@@ -79,91 +79,92 @@ async function resumeIfRunning() {
   if (!engine.paused) kick();
 }
 
-/** pageTabId: 頼んできたタブ（共有ページのパネルから頼まれたとき、そのページの中で共有を読むのに使う） */
-async function handle(req: Request, pageTabId?: number): Promise<unknown> {
-  switch (req.type) {
-    case 'linkex.call': {
-      const result = await callLinkex({ method: req.method, path: req.path, params: req.params, data: req.data });
-      if (!result.ok) {
-        throw new Error(`${result.error}${result.detail ? ` ${JSON.stringify(result.detail)}` : ''}`);
+/** メッセージの種類ごとの受け持ち。応答の形は messages.ts の ResponseMap に合わせる（合わなければ型で分かる） */
+type Handlers = {
+  [K in Request['type']]: (
+    req: Extract<Request, { type: K }>,
+    /** 頼んできたタブ（共有ページのパネルから頼まれたとき、そのページの中で共有を読むのに使う） */
+    pageTabId?: number,
+  ) => Promise<ResponseMap[K]>;
+};
+
+const handlers: Handlers = {
+  'linkex.call': async (req) => {
+    const result = await callLinkex({ method: req.method, path: req.path, params: req.params, data: req.data });
+    if (!result.ok) {
+      throw new Error(`${result.error}${result.detail ? ` ${JSON.stringify(result.detail)}` : ''}`);
+    }
+    return result.data;
+  },
+  'linkex.openTab': async () => {
+    const tabId = await ensureLinkexTab();
+    await chrome.tabs.update(tabId, { active: true });
+    return tabId;
+  },
+  'jd.info': () => getInfo(),
+  'jd.add': (req) => addDownload(req.url, { dir: req.dir, out: req.out }),
+  'jd.active': async () => {
+    const ids = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId).map((i) => i.jdId!);
+    // 画面の状態確認は、JD2 が落ちていることを早く見せたいので呼び直しを少なくする
+    const [links, speed] = await Promise.all([queryLinks(ids, { quick: true }), totalSpeed({ quick: true })]);
+    return {
+      downloadSpeed: speed || 0,
+      active: links
+        .filter((l) => !l.finished)
+        .map((l) => ({
+          jdId: String(l.uuid),
+          totalLength: l.bytesTotal ?? 0,
+          completedLength: l.bytesLoaded ?? 0,
+          downloadSpeed: l.speed ?? 0,
+        })),
+    };
+  },
+  'cdn.probe': (req) => probeCdn(req.url),
+
+  'queue.add': (req, pageTabId) => enqueueShares(req.text, pageTabId),
+  'share.walk': async (req, pageTabId) => {
+    const res = await walkShareInTab(req.token, { pageTabId });
+    if (!res.ok) throw new Error(res.error);
+    return { shareName: res.shareName, files: res.files };
+  },
+  'queue.addFiles': (req) =>
+    addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files, collapseRoot: req.collapseRoot }]),
+  'dashboard.open': (req) => openDashboard(req.tab),
+  'queue.start': () => start(),
+  'queue.pause': () => pause(),
+  'queue.retry': (req) =>
+    mutateQueue((items) => {
+      const item = items.find((i) => i.id === req.id);
+      if (item) retryItem(item);
+    }),
+  'queue.retryFailed': (req) =>
+    mutateQueue((items) => {
+      let n = 0;
+      for (const item of items) {
+        if (item.state === 'error' && (!req.token || item.shareToken === req.token) && retryItem(item)) n++;
       }
-      return result.data;
-    }
-    case 'linkex.openTab': {
-      const tabId = await ensureLinkexTab();
-      await chrome.tabs.update(tabId, { active: true });
-      return tabId;
-    }
-    case 'jd.info':
-      return getInfo();
-    case 'jd.add':
-      return addDownload(req.url, { dir: req.dir, out: req.out });
-    case 'jd.active': {
-      const ids = (await readQueue()).filter((i) => i.state === 'downloading' && i.jdId).map((i) => i.jdId!);
-      // 画面の状態確認は、JD2 が落ちていることを早く見せたいので呼び直しを少なくする
-      const [links, speed] = await Promise.all([queryLinks(ids, { quick: true }), totalSpeed({ quick: true })]);
-      return {
-        downloadSpeed: speed || 0,
-        active: links
-          .filter((l) => !l.finished)
-          .map((l) => ({
-            jdId: String(l.uuid),
-            totalLength: l.bytesTotal ?? 0,
-            completedLength: l.bytesLoaded ?? 0,
-            downloadSpeed: l.speed ?? 0,
-          })),
-      } satisfies JdLive;
-    }
-    case 'cdn.probe':
-      return probeCdn(req.url);
+      return n;
+    }),
+  'queue.remove': (req) => mutateQueue((items) => removeItems(items, new Set([req.id]))),
+  'queue.removeMany': (req) => mutateQueue((items) => removeItems(items, new Set(req.ids))),
+  'queue.clearFinished': () =>
+    mutateQueue((items) => {
+      const keep = items.filter((i) => !FINISHED_STATES.includes(i.state));
+      items.splice(0, items.length, ...keep);
+    }),
 
-    case 'queue.add':
-      return enqueueShares(req.text, pageTabId);
-    case 'share.walk': {
-      const res = await walkShareInTab(req.token, { pageTabId });
-      if (!res.ok) throw new Error(res.error);
-      return { shareName: res.shareName, files: res.files };
-    }
-    case 'queue.addFiles':
-      return addWalkedToQueue([{ token: req.token, shareName: req.shareName, files: req.files, collapseRoot: req.collapseRoot }]);
-    case 'dashboard.open':
-      return openDashboard(req.tab);
-    case 'queue.start':
-      return start();
-    case 'queue.pause':
-      return pause();
-    case 'queue.retry':
-      return mutateQueue((items) => {
-        const item = items.find((i) => i.id === req.id);
-        if (item) retryItem(item);
-      });
-    case 'queue.retryFailed':
-      return mutateQueue((items) => {
-        let n = 0;
-        for (const item of items) {
-          if (item.state === 'error' && (!req.token || item.shareToken === req.token) && retryItem(item)) n++;
-        }
-        return n;
-      });
-    case 'queue.remove':
-      return mutateQueue((items) => removeItems(items, new Set([req.id])));
-    case 'queue.removeMany':
-      return mutateQueue((items) => removeItems(items, new Set(req.ids)));
-    case 'queue.clearFinished':
-      return mutateQueue((items) => {
-        const keep = items.filter((i) => !FINISHED_STATES.includes(i.state));
-        items.splice(0, items.length, ...keep);
-      });
+  'events.clear': () => clearEvents(),
+  'hashes.clear': () => clearHashes(),
+  'settings.get': () => loadSettings(),
+  'settings.set': (req) => saveSettings(req.patch),
+};
 
-    case 'events.clear':
-      return clearEvents();
-    case 'hashes.clear':
-      return clearHashes();
-    case 'settings.get':
-      return loadSettings();
-    case 'settings.set':
-      return saveSettings(req.patch);
-  }
+async function handle(req: Request, pageTabId?: number): Promise<unknown> {
+  // 種類ごとの型は handlers の定義で確かめてあるので、ここでは1つの形として呼ぶ
+  const handler = handlers[req.type] as ((req: Request, pageTabId?: number) => Promise<unknown>) | undefined;
+  // 古い画面（拡張機能を更新する前に開いたページ）から、今はない種類が届くことがある
+  if (!handler) throw new Error(`知らないメッセージです: ${String(req.type)}（このページを読み込み直してください）`);
+  return handler(req, pageTabId);
 }
 
 /** 失敗・省略した件を、もう一度最初からやり直す状態に戻す */

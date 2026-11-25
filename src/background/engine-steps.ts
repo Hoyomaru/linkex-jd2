@@ -60,7 +60,7 @@ function listRoot(notBefore: number): RootListing {
   const listing: RootListing = {
     since: Date.now(),
     files: (async () => {
-      const list = await collectPages((page) => api.rootFiles(page));
+      const list = await collectPages((page) => api.myFiles(undefined, page));
       const map = new Map<string, any>();
       for (const item of list) {
         const f = unwrapFile(item);
