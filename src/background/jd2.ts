@@ -192,10 +192,40 @@ const LINK_FIELDS = {
   startAt: 0,
 };
 
+/** 取り終えた一覧を、ほかの呼び出しに使い回してよい時間 */
+const LINKS_SHARE_MS = 1_000;
+let sharedLinks: { quick: boolean; doneAt: number | null; links: Promise<JdLink[]> } | null = null;
+
+/**
+ * JD2 のダウンロード一覧を全件取る。JD2 は絞り込めず毎回全件を返すので、指示役（3秒ごと）と
+ * 開いている画面（それぞれ1.5秒ごと）が別々に取ると、そのたびに大きな応答を受け取ることになる。
+ * 取っている最中か、取り終えて間もない一覧があれば、それを分け合う。
+ * 呼び直しを少なくした一覧（quick）は、ふつうの呼び出しには使わない（つながらないと早めに失敗するため）
+ */
+function allLinks(quick: boolean): Promise<JdLink[]> {
+  const s = sharedLinks;
+  const fresh = s && (s.doneAt === null || Date.now() - s.doneAt < LINKS_SHARE_MS);
+  if (s && fresh && (quick || !s.quick)) return s.links;
+  const entry = {
+    quick,
+    doneAt: null as number | null,
+    links: jdWith<JdLink[]>(quick ? QUICK : {}, 'downloadsV2/queryLinks', LINK_FIELDS),
+  };
+  sharedLinks = entry;
+  entry.links.then(
+    () => (entry.doneAt = Date.now()),
+    // 失敗した一覧はほかの呼び出しに使わせない
+    () => {
+      if (sharedLinks === entry) sharedLinks = null;
+    },
+  );
+  return entry.links;
+}
+
 /** ダウンロード一覧のリンクのうち、ids のもの */
 export async function queryLinks(ids: string[], { quick = false } = {}): Promise<JdLink[]> {
   if (ids.length === 0) return [];
-  const all = await jdWith<JdLink[]>(quick ? QUICK : {}, 'downloadsV2/queryLinks', LINK_FIELDS);
+  const all = await allLinks(quick);
   const want = new Set(ids);
   return all.filter((l) => want.has(String(l.uuid)));
 }

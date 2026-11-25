@@ -72,6 +72,24 @@ async function pageReady(tabId: number): Promise<boolean> {
   }
 }
 
+/**
+ * pageReady が通ったページ。Linkexのタブは status が complete にならないままのことが多く、
+ * そのたびに確かめると、APIを1回呼ぶごとにページとのやり取りが1往復増えるので、
+ * 読み込み直すかページが移るまでは確かめ直さない
+ */
+let readyPage: { tabId: number; url: string } | null = null;
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (readyPage?.tabId === tabId && (info.status === 'loading' || info.url !== undefined)) readyPage = null;
+});
+
+async function readyOnce(tab: chrome.tabs.Tab): Promise<boolean> {
+  if (tab.id === undefined || !tab.url) return false;
+  if (readyPage?.tabId === tab.id && readyPage.url === tab.url) return true;
+  if (!(await pageReady(tab.id))) return false;
+  readyPage = { tabId: tab.id, url: tab.url };
+  return true;
+}
+
 /** 時間内に終わらなければ失敗にする（凍結したタブへの命令は、起きるまで返ってこないため） */
 class TabTimeoutError extends Error {}
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -132,7 +150,7 @@ export async function ensureLinkexTab(): Promise<number> {
   // 前回使ったタブがそのまま使えるなら、確認を最小限にして返す
   if (cachedTabId !== null) {
     const tab = await chrome.tabs.get(cachedTabId).catch(() => undefined);
-    if (tab?.id !== undefined && isDrive(tab.url) && (tab.status === 'complete' || (await pageReady(tab.id)))) {
+    if (tab?.id !== undefined && isDrive(tab.url) && (tab.status === 'complete' || (await readyOnce(tab)))) {
       if (await wakeIfAsleep(tab)) {
         const woke = await chrome.tabs.get(tab.id);
         if (!isDrive(woke.url)) throw new LinkexLoginError(`タブが ${pagePath(woke.url)} に移りました`);

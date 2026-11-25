@@ -203,6 +203,20 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   });
 
   // ---------- 描画 ----------
+  /** 見えていないあいだに変わって、まだ描いていない */
+  let queueStale = false;
+  let eventsStale = false;
+  /** そのタブ（data-page）が見えていないか。ブラウザのタブが裏にあるときも見えていない */
+  const pageHidden = (page: string) =>
+    document.hidden || (document.querySelector<HTMLElement>(`[data-page="${page}"]`)?.hidden ?? false);
+  const renderIfStale = () => {
+    if (queueStale && !pageHidden('queue')) render();
+    if (eventsStale && !pageHidden('log')) renderEvents();
+  };
+  // タブの切り替え（dashboard.ts が hashchange で data-page の hidden を切り替えた後）と、ブラウザのタブが表に出たとき
+  window.addEventListener('hashchange', () => setTimeout(renderIfStale, 0));
+  document.addEventListener('visibilitychange', renderIfStale);
+
   let renderTimer: ReturnType<typeof setTimeout> | undefined;
   /** 何度も続けて変わるので、まとめて描き直す */
   function scheduleRender(delay = 200) {
@@ -316,6 +330,12 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
 
   function render() {
     const s = renderOverview();
+    // 一覧は件数が多いと作り直しが重いので、見えていないあいだは後回しにし、見えたときに1回描く
+    if (pageHidden('queue')) {
+      queueStale = true;
+      return;
+    }
+    queueStale = false;
     renderFilters(s.counts, s.total);
 
     // 共有ごとにまとめる（キューに入った順）
@@ -472,6 +492,12 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
   }
 
   function renderEvents() {
+    // 処理ログも、見えていないあいだは描かない（処理中はログが増えるたびに最大300件を作り直すため）
+    if (pageHidden('log')) {
+      eventsStale = true;
+      return;
+    }
+    eventsStale = false;
     const list = $('events');
     const shown = eventLevel === 'all' ? events : events.filter((e) => e.level !== 'info');
     if (shown.length === 0) {
