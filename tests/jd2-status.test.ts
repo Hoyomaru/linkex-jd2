@@ -4,6 +4,7 @@ import {
   cdnObjectSize,
   cleanupRemovesFinished,
   directHttpLink,
+  findHandedLink,
   jdLinkState,
   MISSING_CONFIRM_MS,
   MISSING_QUICK_MS,
@@ -82,4 +83,18 @@ test('完了した件を処理中に消す片付けの設定を見分ける', ()
   assert.equal(cleanupRemovesFinished('CLEANUP_ONCE_AT_STARTUP'), false);
   assert.equal(cleanupRemovesFinished('NEVER'), false);
   assert.equal(cleanupRemovesFinished(null), false);
+});
+
+test('渡し中だった URL のリンクを、directhttp:// の有無を問わず見つける', () => {
+  const url = 'https://cdn.example/pool/pub/abc/10485760';
+  const links = [
+    { uuid: 1, url: 'https://cdn.example/pool/pub/other/5' },
+    { uuid: 2, url },
+  ];
+  assert.equal(findHandedLink(links, `directhttp://${url}`), '2');
+  assert.equal(findHandedLink([{ uuid: 3, url: `directhttp://${url}` }], url), '3');
+});
+
+test('同じ URL のリンクがなければ null（URL を持たないリンクも合わない）', () => {
+  assert.equal(findHandedLink([{ uuid: 1 }, { uuid: 2, url: 'https://cdn.example/x/1' }], 'https://cdn.example/x/2'), null);
 });

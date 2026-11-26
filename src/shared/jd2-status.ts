@@ -85,3 +85,14 @@ export function missingConfirmMs(now: number, firstOkAt: number, lastFailAt: num
 export function cleanupRemovesFinished(action: string | null): boolean {
   return action === 'CLEANUP_IMMEDIATELY' || action === 'CLEANUP_AFTER_PACKAGE_HAS_FINISHED';
 }
+
+/**
+ * JD2 の一覧（url 付きで取ったもの）から、渡し中だった URL のリンクを探し、そのIDを返す。なければ null。
+ * JD2 が directhttp:// を外して持つことがあるので、外した形で比べる
+ */
+export function findHandedLink(links: { uuid: number; url?: string }[], url: string): string | null {
+  const plain = (u: string) => u.replace(/^directhttp:\/\//i, '');
+  const want = plain(url);
+  const hit = links.find((l) => l.url !== undefined && plain(l.url) === want);
+  return hit ? String(hit.uuid) : null;
+}

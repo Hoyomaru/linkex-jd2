@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findOwnCopy, handedToJd, pickLeftovers, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
+import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -195,4 +195,26 @@ test('片付けの対象は、フォルダとキューの件のコピーを除�
   ];
   const got = pickLeftovers(files, new Set(['c']), (f) => f.type === 'folder');
   assert.deepEqual(got.map((f) => f.id), ['a']);
+});
+
+test('渡し中のまま止まった件を拾い直す: 保存せずに取る件はダウンロード中へ', () => {
+  const it = item({ state: 'retry', handing: { url: 'u', hash: 'h1', fileSize: 10 } });
+  assert.deepEqual(adoptHanded(it, '42'), {
+    state: 'downloading',
+    jdId: '42',
+    hash: 'h1',
+    fileSize: 10,
+    handing: undefined,
+    note: undefined,
+    error: undefined,
+  });
+});
+
+test('渡し中のまま止まった件を拾い直す: コピーのある件は削除中へ（コピーを消してから見届ける）', () => {
+  const it = item({ state: 'copied', destFileId: 'f1', handing: { url: 'u', hash: null } });
+  const patch = adoptHanded(it, '7');
+  assert.equal(patch.state, 'deleting');
+  assert.equal(patch.jdId, '7');
+  assert.equal(patch.hash, it.hash);
+  assert.equal(patch.handing, undefined);
 });

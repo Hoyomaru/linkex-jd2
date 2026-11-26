@@ -72,6 +72,22 @@ export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
  * JD2に渡し済み（または渡している最中）の数。これが「JD2に渡しておく数」に届いていたら、
  * 先読みで保存した件はJD2に渡さずに待つ
  */
+/**
+ * 渡し中のまま止まった件が、JD2 の一覧に jdId のリンクとして入っていたときの書き換え。
+ * コピーのある件（保存してから取る件）は、渡した後と同じく削除中にしてコピーを消してから見届ける
+ */
+export function adoptHanded(item: QueueItem, jdId: string): Partial<QueueItem> {
+  return {
+    state: item.destFileId ? 'deleting' : 'downloading',
+    jdId,
+    hash: item.handing?.hash ?? item.hash,
+    fileSize: item.handing?.fileSize ?? item.fileSize,
+    handing: undefined,
+    note: undefined,
+    error: undefined,
+  };
+}
+
 export function handedToJd(items: QueueItem[], sendingNow: number): number {
   return items.filter((i) => i.state === 'downloading' || (i.state === 'deleting' && i.jdId)).length + sendingNow;
 }

@@ -57,6 +57,12 @@ export interface QueueItem {
   /** JD2のダウンロード一覧でのリンクのID */
   jdId?: string;
   /**
+   * JD2 に渡している最中の印（渡す直前に書き、jdId を書くときに外す）。
+   * 渡した後、jdId を書く前に Service Worker が止まったら、次に進めるときこの URL のリンクを JD2 から探して拾い直す
+   * （探さずに渡し直すと、JD2 に同じ名前のリンクが2本できる）
+   */
+  handing?: { url: string; hash: string | null; fileSize?: number };
+  /**
    * 受け取るべき大きさ。CDN が実際に配っている大きさ（ダウンロードURLの最後の段）で、
    * 取れなければ Linkex の file/get の size。JD2 が途中で切れた分を完了にしていないか確かめる
    */

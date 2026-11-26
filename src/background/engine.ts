@@ -10,7 +10,7 @@ import { IN_STORAGE_STATES, pickLeftovers, pickStarts } from '../shared/schedule
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, noteJdDown, resetRuntime, runtime, sleep, stopWithNotice } from './engine-runtime';
-import { stepCopy, stepDelete, stepDirect, stepFindCopy, stepSend } from './engine-steps';
+import { resolveHanding, stepCopy, stepDelete, stepDirect, stepFindCopy, stepSend } from './engine-steps';
 import { refreshDownloads } from './jd-monitor';
 import { pingJd } from './jd2';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
@@ -289,6 +289,8 @@ async function trafficExhausted(startBytes: number): Promise<boolean> {
 /** 1件を1段階進める。失敗したら再試行待ちかエラーにする */
 async function processItem(item: QueueItem): Promise<void> {
   try {
+    // 前回 JD2 に渡している最中に止まった件は、渡し直す前に JD2 に入っていないか確かめる
+    if (await resolveHanding(item)) return;
     switch (item.state) {
       case 'pending':
       case 'retry':

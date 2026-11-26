@@ -7,11 +7,11 @@
 import { contentHash, formatBytes, unwrapFile } from '../shared/files';
 import { cdnObjectSize } from '../shared/jd2-status';
 import type { QueueItem } from '../shared/queue';
-import { findOwnCopy, handedToJd } from '../shared/scheduler';
+import { adoptHanded, findOwnCopy, handedToJd } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
-import { addDownload } from './jd2';
+import { addDownload, findHanded } from './jd2';
 import { isDownloaded, logEvent, readQueue, updateItem } from './store';
 
 const COPY_TIMEOUT_MS = 5 * 60_000;
@@ -123,8 +123,8 @@ async function sendDirect(item: QueueItem): Promise<boolean> {
   }
   // URLを発行しているあいだにキューから外された件は、JD2に渡さない（渡すと見届けない件になる）
   if (!(await stillQueued(item.id))) return true;
-  const jdId = await handToJd(item, url, t);
-  await updateItem(item.id, { state: 'downloading', hash, jdId, fileSize, note: undefined, error: undefined });
+  const jdId = await handToJd(item, { url, hash, fileSize }, t);
+  await updateItem(item.id, { state: 'downloading', hash, jdId, fileSize, handing: undefined, note: undefined, error: undefined });
   await logEvent('info', `JD2へ渡しました（保存なし）: ${item.relDir}\\${item.outName}`);
   await logLaps(item);
   return true;
@@ -179,12 +179,35 @@ async function stillQueued(id: string): Promise<boolean> {
   return (await readQueue()).some((i) => i.id === id);
 }
 
-/** JD2 に渡し、JD2 の一覧でのリンクのIDを返す（再試行のときも同じ保存先・同じ名前なので、続きから取る） */
-async function handToJd(item: QueueItem, url: string, since: number): Promise<string> {
-  const jdId = await addDownload(url, { dir: item.relDir, out: item.outName });
+/**
+ * JD2 に渡し、JD2 の一覧でのリンクのIDを返す（再試行のときも同じ保存先・同じ名前なので、続きから取る）。
+ * 渡す前に「渡し中」の印を書いておき、呼び出し元が jdId を書くときに外す。
+ * 渡し終えてから jdId を書くまでに止まったり、一覧へ移す返事が切れたりしても、次に進めるとき resolveHanding が拾い直す。
+ * 渡せなかった（例外）ときも印は残し、次に進めるとき JD2 に入っていないことを確かめてから渡し直す
+ */
+async function handToJd(item: QueueItem, handing: NonNullable<QueueItem['handing']>, since: number): Promise<string> {
+  await updateItem(item.id, { handing });
+  const jdId = await addDownload(handing.url, { dir: item.relDir, out: item.outName });
   lap(item.id, 'JD2へ', since);
   runtime.jdDownSince = 0;
   return jdId;
+}
+
+/**
+ * 渡し中の印が残っている件（前回、渡している最中に止まった）を片付ける。
+ * JD2 に入っていれば拾い直して true（この件の今回の段階はここで終わり）。
+ * 入っていなければ印を外して false（いつもどおり渡し直す）
+ */
+export async function resolveHanding(item: QueueItem): Promise<boolean> {
+  if (!item.handing || item.jdId) return false;
+  const jdId = await findHanded(item.handing.url);
+  if (jdId === null) {
+    await updateItem(item.id, { handing: undefined });
+    return false;
+  }
+  await updateItem(item.id, adoptHanded(item, jdId));
+  await logEvent('info', `JD2に渡し済みだったため、そのまま見届けます: ${item.relDir}\\${item.outName}`);
+  return true;
 }
 
 // ---------- 保存してから取る ----------
@@ -311,8 +334,8 @@ async function sendToJd(item: QueueItem): Promise<true> {
   }
   if (!url) throw new Error('ダウンロードURLを取得できませんでした');
 
-  const jdId = await handToJd(item, url, since);
-  await updateItem(item.id, { state: 'deleting', hash, jdId, fileSize, note: undefined });
+  const jdId = await handToJd(item, { url, hash, fileSize }, since);
+  await updateItem(item.id, { state: 'deleting', hash, jdId, fileSize, handing: undefined, note: undefined });
   await logEvent('info', `JD2へ渡しました: ${item.relDir}\\${item.outName}`);
   return true;
 }

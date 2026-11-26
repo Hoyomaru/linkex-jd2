@@ -1,4 +1,4 @@
-import { directHttpLink } from '../shared/jd2-status';
+import { directHttpLink, findHandedLink } from '../shared/jd2-status';
 import type { JdInfo } from '../shared/messages';
 import { requestJd, type RequestOptions } from '../shared/jd2-request';
 import { loadSettings } from '../shared/settings';
@@ -116,6 +116,25 @@ export async function addDownload(url: string, opts: { dir?: string; out?: strin
     if (left.length) await jd('linkgrabberv2/removeLinks', left.map((l) => l.uuid), []).catch(() => undefined);
     throw e;
   }
+}
+
+/**
+ * 渡している最中に止まった URL を、JD2 のダウンロード一覧から探す。あれば（止まっていれば動かして）そのIDを返す。
+ * なければ、リンクグラバーに残った分（名前を付ける前・一覧へ移す前に止まったもの）を片付けて null を返す
+ */
+export async function findHanded(url: string): Promise<string | null> {
+  const links = await jd<{ uuid: number; url?: string }[]>('downloadsV2/queryLinks', { url: true, maxResults: -1, startAt: 0 });
+  const id = findHandedLink(links, url);
+  if (id === null) {
+    const left = await grabbedByUrl(url);
+    if (left.length) await jd('linkgrabberv2/removeLinks', left.map((l) => l.uuid), []);
+    return null;
+  }
+  // 一覧へ移した直後に止まった場合は、まだ始まっていないことがある
+  const { forceStart } = await loadSettings();
+  await jd('downloadcontroller/start').catch(() => undefined);
+  if (forceStart) await jd('downloadsV2/forceDownload', [Number(id)], []).catch(() => undefined);
+  return id;
 }
 
 /** リンクグラバーにある、この URL のリンク */
