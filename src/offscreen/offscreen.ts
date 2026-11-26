@@ -44,17 +44,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  const id = nextId++;
-  pending.set(id, sendResponse);
-  try {
-    // 作り直した直後は iframe の中がまだ空のページ（拡張機能と同じ出どころ）なので、
-    // 宛先の出どころが合わず例外になる。そのときは届けられなかったとして、すぐ「返事なし」を返す
-    // （Service Worker 側は、準備の確認ならやり直し、呼び出しなら固定タブで続ける。頼みは送っていないので二重にならない）
-    iframe.contentWindow?.postMessage({ __linkexJd2: 'req', id, body: message.body }, FRAME_ORIGIN);
-  } catch {
-    pending.delete(id);
+  // 作り直した直後は iframe の中がまだ空のページ（拡張機能と同じ出どころ）なので、
+  // Linkex 宛ての postMessage は例外にならず、エラーを記録して捨てられるだけになる。
+  // そのときは送らずに、すぐ「返事なし」を返す
+  // （Service Worker 側は、準備の確認ならやり直し、呼び出しなら固定タブで続ける。頼みは送っていないので二重にならない）
+  if (!frameShowsLinkex()) {
     sendResponse(undefined);
     return false;
   }
+  const id = nextId++;
+  pending.set(id, sendResponse);
+  iframe.contentWindow?.postMessage({ __linkexJd2: 'req', id, body: message.body }, FRAME_ORIGIN);
   return true; // 非同期で応答する（返事がなければ Service Worker 側の時間切れで諦める）
 });
+
+/**
+ * iframe の中が Linkex のページになっているか。
+ * 中身がまだ空のページなら拡張機能と同じ出どころなので場所を読めるが、
+ * Linkex のページになっていれば出どころが違うので、読もうとすると例外になる
+ */
+function frameShowsLinkex(): boolean {
+  const win = iframe.contentWindow;
+  if (!win) return false;
+  try {
+    return win.location.origin === FRAME_ORIGIN;
+  } catch {
+    return true;
+  }
+}
