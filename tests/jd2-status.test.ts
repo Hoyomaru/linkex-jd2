@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cdnObjectSize, directHttpLink, jdLinkState } from '../src/shared/jd2-status.ts';
+import {
+  cdnObjectSize,
+  cleanupRemovesFinished,
+  directHttpLink,
+  jdLinkState,
+  MISSING_CONFIRM_MS,
+  MISSING_QUICK_MS,
+  missingConfirmMs,
+} from '../src/shared/jd2-status.ts';
 
 // 値は JD2 v2 build 48637 の downloadsV2/queryLinks で実際に返ってきたもの
 
@@ -54,4 +62,24 @@ test('CDN の URL の最後の段から、配っているファイルの大き�
   assert.equal(cdnObjectSize('directhttp://https://file.fastspeedcdn.com/pool/pub/a/652460000?uid=1'), 652460000);
   assert.equal(cdnObjectSize('https://file.fastspeedcdn.com/pool/pub/a/file.mp4'), null);
   assert.equal(cdnObjectSize('not a url'), null);
+});
+
+test('JD2 がしばらく問題なく応答していれば、一覧から消えた件はすぐ完了とみなす', () => {
+  const now = 10 * 60_000;
+  assert.equal(missingConfirmMs(now, now - 2 * 60_000, 0), MISSING_QUICK_MS);
+});
+
+test('見届けを始めたばかり・JD2 とつながらなかった直後は、1分待つ（起動直後の空の一覧で取り違えない）', () => {
+  const now = 10 * 60_000;
+  assert.equal(missingConfirmMs(now, 0, 0), MISSING_CONFIRM_MS);
+  assert.equal(missingConfirmMs(now, now - 30_000, 0), MISSING_CONFIRM_MS);
+  assert.equal(missingConfirmMs(now, now - 5 * 60_000, now - 10_000), MISSING_CONFIRM_MS);
+});
+
+test('完了した件を処理中に消す片付けの設定を見分ける', () => {
+  assert.equal(cleanupRemovesFinished('CLEANUP_IMMEDIATELY'), true);
+  assert.equal(cleanupRemovesFinished('CLEANUP_AFTER_PACKAGE_HAS_FINISHED'), true);
+  assert.equal(cleanupRemovesFinished('CLEANUP_ONCE_AT_STARTUP'), false);
+  assert.equal(cleanupRemovesFinished('NEVER'), false);
+  assert.equal(cleanupRemovesFinished(null), false);
 });

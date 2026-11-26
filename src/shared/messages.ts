@@ -104,6 +104,8 @@ export interface JdInfo {
   perHostEnabled: boolean | null;
   perHost: number | null;
   chunks: number | null;
+  /** 「完了したダウンロードを削除」（CleanupAfterDownloadAction。NEVER・CLEANUP_IMMEDIATELY など） */
+  cleanup: string | null;
 }
 
 /** Linkex APIの共通応答。code 0 が成功 */

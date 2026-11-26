@@ -2,7 +2,7 @@
  * JD2 に渡した件の見届け。JD2 のダウンロード一覧を取り込み、完了・失敗・進まない件を反映する。
  */
 import { formatBytes } from '../shared/files';
-import { jdLinkState } from '../shared/jd2-status';
+import { jdLinkState, missingConfirmMs } from '../shared/jd2-status';
 import type { QueueItem } from '../shared/queue';
 import { loadSettings } from '../shared/settings';
 import { Jd2ConnectionError } from '../shared/jd2-request';
@@ -14,10 +14,11 @@ import { logEvent, logEvents, readEngine, readQueue, rememberHashes, updateItems
 /** ダウンロード中の件がどれもこの時間進まなければ、知らせる（JD2が確認を待っている・止められているなど） */
 const STALL_NOTICE_MS = 15 * 60_000;
 
-/** JD2 の一覧からこの時間消えたままなら、完了後に片付けられたとみなす（起動直後の空の一覧で取り違えないため） */
-const MISSING_CONFIRM_MS = 60_000;
 /** 一覧から消えているのに最初に気づいた時刻（JD2のリンクID →） */
 const missingSince = new Map<string, number>();
+/** 最初に JD2 の一覧を取れた時刻・最後に取れなかった時刻（消えた件をすぐ完了とみなしてよいかを決める） */
+let firstListOkAt = 0;
+let lastListFailAt = 0;
 
 /** 進み具合だけの変化は、この間隔より短くは保存しない（画面はJD2から直接取っている） */
 const PROGRESS_SAVE_MS = 30_000;
@@ -90,7 +91,9 @@ async function doRefreshDownloads(): Promise<void> {
   try {
     links = await queryLinks(items.map((i) => i.jdId!));
     runtime.jdDownSince = 0;
+    firstListOkAt ||= Date.now();
   } catch (e) {
+    lastListFailAt = Date.now();
     // JD2に一時的につながらない場合は次回また確認する。つながらないままが長く続いたら、
     // ダウンロード中の件しか残っていなくても（担当が JD2 を呼ばなくても）止めて知らせる。
     // 止まっている間は見回りが1分ごとに呼ぶので、そのたびに知らせないよう数えない
@@ -103,6 +106,7 @@ async function doRefreshDownloads(): Promise<void> {
     stillActive.reduce((sum, i) => sum + (byId.get(i.jdId!)?.bytesLoaded ?? 0), 0),
     stillActive.length,
   );
+  const confirmMs = missingConfirmMs(Date.now(), firstListOkAt, lastListFailAt);
   const patches = new Map<string, Partial<QueueItem>>();
   /** 完了した件の中身（ダウンロード済みとして、まとめて1回で記録する） */
   const downloaded: { hash: string; name: string }[] = [];
@@ -129,10 +133,11 @@ async function doRefreshDownloads(): Promise<void> {
     if (state !== 'missing') missingSince.delete(item.jdId!);
     if (state === 'missing') {
       // 一覧から消えている（JD2の設定で完了後に自動で片付けられた・手で消された）。渡せた時点で成功とみなす。
-      // ただし JD2 の起動直後などは一覧が一時的に空で返ることがあるので、しばらく消えたままのときだけ
+      // ただし JD2 の起動直後などは一覧が一時的に空で返ることがあるので、消えたままなのを確かめてから
+      // （JD2 がしばらく問題なく応答していれば数秒、そうでなければ1分。missingConfirmMs）
       const since = missingSince.get(item.jdId!) ?? Date.now();
       missingSince.set(item.jdId!, since);
-      if (Date.now() - since < MISSING_CONFIRM_MS) continue;
+      if (Date.now() - since < confirmMs) continue;
       missingSince.delete(item.jdId!);
       if (item.hash) downloaded.push({ hash: item.hash, name: item.name });
       patches.set(item.id, { state: 'done', jdId: undefined, note: 'JD2の一覧になし' });

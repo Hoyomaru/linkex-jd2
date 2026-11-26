@@ -59,3 +59,29 @@ export function cdnObjectSize(url: string): number | null {
     return null;
   }
 }
+
+/** JD2 の一覧から消えた件を完了とみなすまでの待ち（JD2 の起動直後などで、一覧が一時的に空で返ることに備える） */
+export const MISSING_CONFIRM_MS = 60_000;
+/** JD2 がしばらく問題なく応答しているときの待ち（取り込み2回分で、消えたままなのを確かめる） */
+export const MISSING_QUICK_MS = 2_000;
+
+/**
+ * 一覧から消えた件を、どれだけ消えたままなら完了とみなすか。
+ * JD2 の「完了したダウンロードを削除」がすぐ削除だと、完了した件はたいてい次の取り込みまでに消えている。
+ * 毎回1分待つと、その間 JD2 に渡しておく枠が埋まったままになるので、JD2 が1分以上続けて応答している
+ * （再起動の直後ではない）ときは、すぐ完了とみなす。
+ * - firstOkAt: この見届けで最初に JD2 の一覧を取れた時刻（0 = まだ）
+ * - lastFailAt: 最後に JD2 の一覧を取れなかった時刻（0 = なし）
+ */
+export function missingConfirmMs(now: number, firstOkAt: number, lastFailAt: number): number {
+  const settled = firstOkAt > 0 && now - firstOkAt >= MISSING_CONFIRM_MS && now - lastFailAt >= MISSING_CONFIRM_MS;
+  return settled ? MISSING_QUICK_MS : MISSING_CONFIRM_MS;
+}
+
+/**
+ * JD2 の「完了したダウンロードを削除」（GeneralSettings の CleanupAfterDownloadAction）が、
+ * 完了した件を処理中に一覧から消してしまう設定か。消されると完了の確かめ（受け取った量が足りているか）ができない
+ */
+export function cleanupRemovesFinished(action: string | null): boolean {
+  return action === 'CLEANUP_IMMEDIATELY' || action === 'CLEANUP_AFTER_PACKAGE_HAS_FINISHED';
+}

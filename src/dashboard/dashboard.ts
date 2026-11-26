@@ -6,6 +6,7 @@ import { setupQueueView } from './queue-view';
 import { setMeter } from '../ui/summary';
 import { secondPress } from '../ui/confirm';
 import { HASHES_KEY } from '../shared/queue';
+import { cleanupRemovesFinished } from '../shared/jd2-status';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -138,6 +139,12 @@ action($('jd-test'), async () => {
     // Linkexのファイルはすべて同じCDNから来るので、同じホストからの数が1だと1件ずつしか落ちない
     if (j.perHostEnabled !== false && j.perHost === 1) {
       el.textContent += '。同じホストからの数が1なので、1件ずつ落とします（JD2の「設定 → 一般」で変えられます）';
+    }
+    // 完了した件をすぐ一覧から消されると、受け取った量が足りているかを確かめられず、消えたことで完了とみなすしかない
+    if (cleanupRemovesFinished(j.cleanup)) {
+      el.textContent +=
+        '。JD2が完了したダウンロードを一覧からすぐ消す設定なので、受け取った量が足りているかを確かめられません' +
+        '（JD2の「設定 → 一般 → 完了したダウンロードを削除」を「しない」か「終了時」にするのがおすすめです）';
     }
     el.textContent += unsaved;
     el.className = 'ok';

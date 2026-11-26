@@ -62,13 +62,14 @@ async function defaultFolder(): Promise<string> {
 export async function getInfo(): Promise<JdInfo> {
   const version = await getVersion();
   const read = <T>(key: string) => jd<T>('config/get', GENERAL, null, key).catch(() => null);
-  const [maxDownloads, perHostEnabled, perHost, chunks] = await Promise.all([
+  const [maxDownloads, perHostEnabled, perHost, chunks, cleanup] = await Promise.all([
     read<number>('MaxSimultaneDownloads'),
     read<boolean>('MaxDownloadsPerHostEnabled'),
     read<number>('MaxSimultaneDownloadsPerHost'),
     read<number>('MaxChunksPerFile'),
+    read<string>('CleanupAfterDownloadAction'),
   ]);
-  return { version, maxDownloads, perHostEnabled, perHost, chunks };
+  return { version, maxDownloads, perHostEnabled, perHost, chunks, cleanup };
 }
 
 /** リンクの読み取り（JD2が URL を確かめる）を待つ上限 */
