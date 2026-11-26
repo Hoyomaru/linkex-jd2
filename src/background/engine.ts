@@ -5,7 +5,7 @@
  */
 import { formatBytes, isFolder, unwrapFile } from '../shared/files';
 import { Jd2ConnectionError } from '../shared/jd2-request';
-import type { EngineState, QueueItem } from '../shared/queue';
+import { FINISHED_STATES, type EngineState, type QueueItem } from '../shared/queue';
 import { IN_STORAGE_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
@@ -111,9 +111,11 @@ async function runLoop(): Promise<void> {
     const waiting = items.filter((i) => i.state === 'pending' || i.state === 'retry');
 
     if (workers.size === 0 && prep.length === 0 && waiting.length === 0 && downloading === 0) {
+      runtime.openShares.clear();
       await finish(items);
       return;
     }
+    if (settings.notifyEachShare) await noticeFinishedShares(items);
 
     // 自分のストレージに残ったコピー（時間切れの後に遅れてできたもの・削除の途中で止まったものなど）を片付ける。
     // Linkex側で処理中の件があると、保存したばかりのコピーを消してしまうので、手が空いているときだけ
@@ -183,6 +185,34 @@ function statusMessage(
   // 担当が動いていれば実行中。ダウンロードを見届けているだけで、空きや容量を待っているなら待機中
   const status = workers.size === 0 && (slotsFull || capacityWait) ? 'waiting' : 'running';
   return { status, message: parts.join('・') };
+}
+
+/** 共有1つ分が終わったとみなすのは、最後の件がこの時間内に終わったときだけ（待ちの件を外しただけのときは知らせない） */
+const SHARE_DONE_RECENT_MS = 5 * 60_000;
+
+/**
+ * 前の周回では終わっていない件があった共有のうち、今は全部終わった（完了・省略・失敗）ものを知らせる。
+ * キュー全体が終わったときは finish がまとめて知らせるので、ここは他の共有がまだ残っているときだけ
+ */
+async function noticeFinishedShares(items: QueueItem[]): Promise<void> {
+  const open = new Set<string>();
+  for (const i of items) if (!FINISHED_STATES.includes(i.state) && i.state !== 'error') open.add(i.shareToken);
+  const closed = [...runtime.openShares].filter((t) => !open.has(t));
+  runtime.openShares = open;
+  for (const token of closed) {
+    const mine = items.filter((i) => i.shareToken === token);
+    if (mine.length === 0 || Date.now() - mine.reduce((m, i) => Math.max(m, i.updatedAt), 0) > SHARE_DONE_RECENT_MS) continue;
+    const done = mine.filter((i) => i.state === 'done');
+    const errors = mine.filter((i) => i.state === 'error').length;
+    const skipped = mine.filter((i) => i.state === 'skipped').length;
+    const bytes = done.reduce((sum, i) => sum + (i.fileSize ?? i.size ?? 0), 0);
+    const name = mine[0].shareName || token;
+    const detail = [`完了 ${done.length}件（${formatBytes(bytes)}）`];
+    if (skipped) detail.push(`省略 ${skipped}件`);
+    if (errors) detail.push(`失敗 ${errors}件`);
+    await logEvent(errors ? 'warn' : 'info', `共有「${name}」が終わりました: ${detail.join('・')}`);
+    await notify(`share:${token}`, `「${name}」が終わりました${errors ? `（失敗 ${errors}件）` : ''}`, detail.join('・'));
+  }
 }
 
 async function finish(items: QueueItem[]): Promise<void> {

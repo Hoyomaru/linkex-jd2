@@ -29,6 +29,8 @@ export type Request =
   | { type: 'queue.remove'; id: string }
   | { type: 'queue.removeMany'; ids: string[] }
   | { type: 'queue.retryFailed'; token?: string }
+  /** 共有に「先に落とす」を付ける（on: false で外す） */
+  | { type: 'queue.prioritize'; token: string; on: boolean }
   | { type: 'queue.clearFinished' }
   | { type: 'settings.get' }
   | { type: 'settings.set'; patch: Partial<Settings> };
@@ -61,6 +63,8 @@ export interface ResponseMap {
   'queue.removeMany': number;
   /** 再試行に戻した件数 */
   'queue.retryFailed': number;
+  /** 書き換えた件数 */
+  'queue.prioritize': number;
   'queue.clearFinished': void;
   'settings.get': Settings;
   'settings.set': Settings;

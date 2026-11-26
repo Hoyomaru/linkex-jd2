@@ -80,6 +80,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
 .group > summary::before { content: "▸"; color: var(--muted); transition: transform 0.15s; }
 .group[open] > summary::before { transform: rotate(90deg); }
 .group-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-priority { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; background: var(--info-soft); color: var(--info); vertical-align: 1px; }
 .group-stats { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .group-meter { grid-column: 2 / -1; height: 4px; margin: 0; }
 .group-actions { grid-column: 2 / -1; display: flex; gap: 6px; flex-wrap: wrap; }

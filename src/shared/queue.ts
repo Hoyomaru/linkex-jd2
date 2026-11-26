@@ -45,6 +45,11 @@ export interface QueueItem {
   hash: string | null;
   /** 重複していても落とし直す */
   force?: boolean;
+  /**
+   * 先に落とす順位（大きいほど先）。無ければ 0 として扱う。共有ごとに「先に落とす」で付け、
+   * 同じ順位どうしはキューに入った順に進める
+   */
+  priority?: number;
   state: ItemState;
   attempts: number;
   /** 保存前にあった自分のファイルのID。自分が作ったコピーだけを消すために使う */

@@ -320,17 +320,19 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     queueStale = false;
     renderFilters(s.counts, s.total);
 
-    // 共有ごとにまとめる（キューに入った順）
+    // 共有ごとにまとめる（「先に落とす」を付けた共有を上に。ほかはキューに入った順）
     const groups = new Map<string, QueueItem[]>();
     for (const item of items) {
       const list = groups.get(item.shareToken);
       if (list) list.push(item);
       else groups.set(item.shareToken, [item]);
     }
+    const priorityOf = (list: QueueItem[]) => list.reduce((m, i) => Math.max(m, i.priority ?? 0), 0);
+    const ordered = [...groups].sort((a, b) => priorityOf(b[1]) - priorityOf(a[1]));
 
     liveRows = new Map();
     const fragments: HTMLElement[] = [];
-    for (const [token, all] of groups) {
+    for (const [token, all] of ordered) {
       const shown = all
         .filter((i) => (filter === 'all' || GROUP_OF[i.state] === filter) && matches(i))
         .sort((a, b) => ORDER[GROUP_OF[a.state]] - ORDER[GROUP_OF[b.state]]);
@@ -379,6 +381,8 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
     summary.dataset.focusKey = `group:${token}`;
     const name = el('span', 'group-name', all[0].shareName || token);
     name.title = `${all[0].shareName}（${token}）`;
+    const prioritized = all.some((i) => i.priority);
+    if (prioritized) name.prepend(el('span', 'group-priority', '優先'));
     const stats = [`完了 ${s.counts.done} / ${s.total - s.counts.skipped}`];
     if (s.counts.active) stats.push(`処理中 ${s.counts.active}`);
     if (s.counts.error) stats.push(`失敗 ${s.counts.error}`);
@@ -397,6 +401,16 @@ export function setupQueueView(log: (label: string, value?: unknown) => void) {
       actions.append(b);
     }
     const waitingIds = all.filter((i) => GROUP_OF[i.state] === 'waiting').map((i) => i.id);
+    // まだ始まっていない件があるうちは、この共有を先に落とせる
+    if (waitingIds.length || prioritized) {
+      const b = el('button', 'small', prioritized ? '優先を外す' : '先に落とす');
+      b.title = prioritized
+        ? 'キューに入った順に戻します'
+        : 'この共有の待ちの件を、ほかの共有より先に始めます（処理中の件はそのまま続けます）';
+      b.dataset.focusKey = `priority:${token}`;
+      run(b, () => must(send({ type: 'queue.prioritize', token, on: !prioritized })), { inSummary: true });
+      actions.append(b);
+    }
     if (waitingIds.length) {
       const key = `wait:${token}`;
       const armed = armedKeys.armed(key);

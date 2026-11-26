@@ -34,6 +34,8 @@ export interface Runtime {
   stall: { bytes: number; since: number; noticed: boolean } | null;
   /** いまJD2に渡している最中の件の数（先読みした件を渡しすぎないように数える） */
   sendingNow: number;
+  /** 前の周回で、まだ終わっていない件があった共有（共有1つ分が終わったら知らせるため） */
+  openShares: Set<string>;
 }
 
 export const runtime: Runtime = {
@@ -47,6 +49,7 @@ export const runtime: Runtime = {
   cleanedAt: 0,
   stall: null,
   sendingNow: 0,
+  openShares: new Set(),
 };
 
 /** 全体を一時停止して、処理ログと通知で知らせる */

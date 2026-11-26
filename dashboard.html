@@ -144,7 +144,9 @@
               <label class="check full"><input type="checkbox" name="directDownload" /> 自分のストレージに保存せず、共有から直接ダウンロードURLを発行してJD2へ渡す（速い。直接取れなかった件だけ、保存してから取る。「先に保存しておく数」は保存して取るときだけ使う）</label>
               <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き。転送量の確認は1分に1回まで。オフにすると確認も省く）</label>
               <label class="check full"><input type="checkbox" name="cleanupLeftovers" /> 自分のストレージ（ルートとゴミ箱）に残ったファイルを、処理の合間に完全削除する（保存前からあったファイルも消える。自分のファイルを置いていないときだけオンにする）</label>
+              <label class="check full"><input type="checkbox" name="fixExtensions" /> 名前に拡張子が無いファイルは、JD2に渡す前に中身の種類を調べて拡張子を付ける（先頭の数バイトだけ取って調べる。画像・動画・音声・PDF・ZIPの主な形式）</label>
               <label class="check full"><input type="checkbox" name="notifications" /> すべて終わったとき・止まったときにWindowsの通知を出す</label>
+              <label class="check full"><input type="checkbox" name="notifyEachShare" /> キューの途中でも、共有1つ分が終わったら通知を出す（上の通知がオンのときだけ）</label>
               <label class="check full"><input type="checkbox" name="autoStartOnAdd" /> 右クリックで追加したら、すぐ開始する</label>
             </div>
           </section>

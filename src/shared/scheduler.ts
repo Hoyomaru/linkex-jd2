@@ -31,6 +31,7 @@ export interface PickContext {
  * - 同じ名前のファイルは同時に保存しない（コピーを名前で見分けているため、取り違えて消さないように）
  * - 保存中のコピーの合計が容量の枠を超えないようにする。サイズ不明の件は単独で進める
  * - キューの順番は飛ばさない（同じ名前の件だけは後回しにする）。大きい件がいつまでも始まらなくなるのを防ぐ
+ *   （順番は「先に落とす」の順位が高い件が先。同じ順位どうしはキューに入った順）
  */
 export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
   const starts: string[] = [];
@@ -48,7 +49,7 @@ export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
   let used = prep.reduce((sum, i) => sum + (i.size ?? 0), 0);
   const names = new Set(prep.map((i) => i.name));
 
-  for (const i of items) {
+  for (const i of byPriority(items)) {
     if (slots <= 0 || downloads >= ctx.maxDownloads + (ctx.prefetch ?? 0) || unknownBusy) break;
     if (!WAITING_STATES.includes(i.state) || ctx.running.has(i.id)) continue;
     if (names.has(i.name)) continue;
@@ -66,6 +67,35 @@ export function pickStarts(items: QueueItem[], ctx: PickContext): string[] {
     downloads++;
   }
   return starts;
+}
+
+/** 始める順に並べる。「先に落とす」の順位が高い件を先にし、同じ順位どうしはキューの順のまま */
+export function byPriority(items: QueueItem[]): QueueItem[] {
+  if (!items.some((i) => i.priority)) return items;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (b.item.priority ?? 0) - (a.item.priority ?? 0) || a.index - b.index)
+    .map((x) => x.item);
+}
+
+/**
+ * 共有に「先に落とす」を付ける・外す（items をその場で書き換える）。
+ * 付けるときは、今ある順位のどれよりも高くする（後から付けた共有ほど先になる）。
+ * 終わった件には付けない。書き換えた件数を返す
+ */
+export function setSharePriority(items: QueueItem[], token: string, on: boolean, now = Date.now()): number {
+  const top = items.reduce((m, i) => Math.max(m, i.priority ?? 0), 0) + 1;
+  let n = 0;
+  for (const item of items) {
+    if (item.shareToken !== token) continue;
+    if (on && (item.state === 'done' || item.state === 'skipped')) continue;
+    if (!on && !item.priority) continue;
+    if (on) item.priority = top;
+    else delete item.priority;
+    item.updatedAt = now;
+    n++;
+  }
+  return n;
 }
 
 /**

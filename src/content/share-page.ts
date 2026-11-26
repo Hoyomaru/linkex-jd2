@@ -7,6 +7,7 @@ import { formatBytes } from '../shared/format';
 import {
   ENGINE_KEY,
   GROUP_OF,
+  HASHES_KEY,
   QUEUE_KEY,
   STATE_LABELS,
   type EngineState,
@@ -14,6 +15,7 @@ import {
 } from '../shared/queue';
 import { parseShareToken } from '../shared/share-url';
 import { matchesQuery, singleTopFolder } from '../shared/files';
+import { fileKind, KIND_LABELS, type FileKind } from '../shared/media-type';
 import { engineView } from '../ui/live';
 import { bytesText, countChips, countText, etaText, leftText, overviewOf, percentHtml, speedText } from '../ui/summary';
 import { send } from '../shared/messages';
@@ -142,6 +144,12 @@ button[data-icon="pause"]::before { clip-path: polygon(0 0, 35% 0, 35% 100%, 0 1
 .search { width: 100%; font: inherit; font-size: 12px; min-height: 32px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .search::placeholder { color: var(--muted); }
 .list-empty { color: var(--muted); font-size: 12px; padding: 10px 0; text-align: center; }
+.item.done .tag { color: var(--ok); }
+.filters { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.chip { min-height: 26px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.chip .n { margin-left: 4px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.min-size { margin-left: auto; font: inherit; font-size: 11px; min-height: 26px; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .pick-actions { display: flex; gap: 6px; }
 .pick-actions .primary { flex: 1; }
 `;
@@ -185,6 +193,16 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
         </div>
         <label class="check"><input type="checkbox" data-act="autostart" checked /> 追加したら開始する</label>
         <input type="search" class="search" placeholder="ファイル名・フォルダ名で絞り込み" aria-label="ファイルを検索" hidden />
+        <div class="filters" hidden>
+          <span class="kinds" role="group" aria-label="種類で絞り込み"></span>
+          <select class="min-size" aria-label="大きさで絞り込み">
+            <option value="0">大きさを問わない</option>
+            <option value="1048576">1MB以上</option>
+            <option value="10485760">10MB以上</option>
+            <option value="104857600">100MB以上</option>
+            <option value="1073741824">1GB以上</option>
+          </select>
+        </div>
         <div class="pick-head" hidden>
           <label class="check"><input type="checkbox" data-act="select-all" checked /> <span class="select-all-label">すべて選択</span></label>
           <span class="pick-count"></span>
@@ -272,6 +290,7 @@ function mount(token: string): { host: HTMLElement; dispose: () => void } {
     if (area !== 'local') return;
     if (changes[QUEUE_KEY]) onQueue((changes[QUEUE_KEY].newValue as QueueItem[] | undefined) ?? []);
     if (changes[ENGINE_KEY]) statusView.setEngine(changes[ENGINE_KEY].newValue as EngineState | undefined);
+    if (changes[HASHES_KEY]) adding.setHashes((changes[HASHES_KEY].newValue as Record<string, unknown> | undefined) ?? {});
     if (changes[WALK_PROGRESS_KEY]) {
       adding.onWalkProgress((changes[WALK_PROGRESS_KEY].newValue as Record<string, WalkProgress> | undefined)?.[token]);
     }
@@ -385,6 +404,8 @@ function setupStatus(
 /** 全部キューに追加・選んで追加 */
 function setupAdding({ token, q, setStatus, busy }: PanelContext): {
   setQueue: (all: QueueItem[]) => void;
+  /** ダウンロード済みの記録（中身のハッシュ → 名前・時刻）が変わった */
+  setHashes: (hashes: Record<string, unknown>) => void;
   /** 共有を読んでいる途中の件数（読んでいる最中だけ表示する） */
   onWalkProgress: (p: WalkProgress | undefined) => void;
 } {
@@ -397,6 +418,14 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
   let walked: { shareName: string; files: WalkedFile[] } | null = null;
   /** このリンクのファイルで、キューに入っているもの（共有側のID → 件） */
   let queued = new Map<string, QueueItem>();
+  /** ほかの共有の件のうち、キューに入っている中身のハッシュ（→ その件） */
+  let queuedHashes = new Map<string, QueueItem>();
+  /** ダウンロード済みの記録にある中身のハッシュ。「選んで追加」を開いたときに読む */
+  let downloaded: Set<string> | null = null;
+  const filters = q<HTMLDivElement>('.filters');
+  const minSize = q<HTMLSelectElement>('.min-size');
+  /** 「選んで追加」の種類の絞り込み（null ならすべて） */
+  let kind: FileKind | null = null;
 
   const afterAdd = async (added: number, addedBytes: number, already: number) => {
     let text = `${added}件（${formatBytes(addedBytes)}）をキューに追加しました${already ? `（すでにあった ${already}件）` : ''}`;
@@ -458,40 +487,59 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
     q<HTMLButtonElement>('[data-act="add-selected"]').disabled = checked.length === 0;
   };
 
-  /** キューに入っているファイルに印を付けて、選べないようにする。選べる件数を返す */
-  const markQueued = (): number => {
-    let selectable = 0;
+  /**
+   * キューに入っているファイルと、同じ中身をもう落としてあるファイルに印を付けて、選べないようにする
+   * （落とし済みの中身は、追加しても「重複のため省略」になるため）。印を付けた件数を返す
+   */
+  const markQueued = (): { queued: number; downloaded: number } => {
+    const marked = { queued: 0, downloaded: 0 };
     for (const box of boxes()) {
       const file = walked!.files[Number(box.dataset.index)];
       const row = box.closest('.item')!;
       const tag = row.querySelector('.tag')!;
       const item = queued.get(file.id);
-      row.classList.toggle('queued', !!item);
-      box.disabled = !!item;
+      const sameHash = !item && file.hash ? queuedHashes.get(file.hash) : undefined;
+      const done = !item && !sameHash && file.hash !== null && downloaded?.has(file.hash) === true;
+      const blocked = Boolean(item || sameHash || done);
+      row.classList.toggle('queued', blocked);
+      row.classList.toggle('done', done || item?.state === 'done');
+      box.disabled = blocked;
+      if (blocked) box.checked = false;
       if (item) {
-        box.checked = false;
         tag.textContent = `キューにあり（${STATE_LABELS[item.state]}）`;
         tag.className = `tag${GROUP_OF[item.state] === 'error' ? ' ng' : ''}`;
+        marked.queued++;
+      } else if (sameHash) {
+        tag.textContent = `同じ中身が別の共有でキューにあり（${STATE_LABELS[sameHash.state]}）`;
+        tag.className = 'tag';
+        marked.queued++;
+      } else if (done) {
+        tag.textContent = '同じ中身をダウンロード済み';
+        tag.className = 'tag';
+        marked.downloaded++;
       } else {
         tag.textContent = '';
-        selectable++;
       }
     }
     updatePickCount();
-    return selectable;
+    return marked;
   };
 
-  /** 検索欄の語で一覧を絞り込む（選んだ状態はそのまま残す） */
+  /** 検索欄の語・種類・大きさで一覧を絞り込む（選んだ状態はそのまま残す） */
   const applySearch = () => {
     if (!walked) return;
     const query = search.value;
+    const min = Number(minSize.value) || 0;
     let shown = 0;
     for (const box of boxes()) {
       const row = box.closest<HTMLElement>('.item')!;
-      row.hidden = !matchesQuery(walked.files[Number(box.dataset.index)], query);
+      const file = walked.files[Number(box.dataset.index)];
+      // 大きさで絞っているときは、大きさが分からないファイルは出さない
+      const sizeOk = min === 0 || (file.size !== null && file.size >= min);
+      row.hidden = !(matchesQuery(file, query) && (kind === null || fileKind(file.name) === kind) && sizeOk);
       if (!row.hidden) shown++;
     }
-    const filtering = query.trim() !== '';
+    const filtering = query.trim() !== '' || kind !== null || min > 0;
     q('.select-all-label').textContent = filtering ? '表示中をすべて選択' : 'すべて選択';
     let empty = list.querySelector<HTMLDivElement>('.list-empty');
     if (shown === 0) {
@@ -505,6 +553,37 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
     updatePickCount();
   };
   search.addEventListener('input', applySearch);
+  minSize.addEventListener('change', applySearch);
+
+  /** 種類の絞り込みの札を作る（この共有にある種類だけ。1種類しかなければ出さない） */
+  const renderKinds = () => {
+    const counts = new Map<FileKind, number>();
+    for (const f of walked!.files) {
+      const k = fileKind(f.name);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const kinds = (Object.keys(KIND_LABELS) as FileKind[]).filter((k) => counts.has(k));
+    const chips: (FileKind | null)[] = kinds.length > 1 ? [null, ...kinds] : [];
+    q('.kinds').replaceChildren(
+      ...chips.map((k) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `chip${kind === k ? ' active' : ''}`;
+        chip.setAttribute('aria-pressed', String(kind === k));
+        chip.textContent = k === null ? 'すべて' : KIND_LABELS[k];
+        const n = document.createElement('span');
+        n.className = 'n';
+        n.textContent = String(k === null ? walked!.files.length : counts.get(k));
+        chip.append(n);
+        chip.addEventListener('click', () => {
+          kind = k;
+          renderKinds();
+          applySearch();
+        });
+        return chip;
+      }),
+    );
+  };
   search.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && search.value) {
       e.preventDefault();
@@ -519,6 +598,7 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
     pickActions.hidden = true;
     pickHead.hidden = true;
     search.hidden = true;
+    filters.hidden = true;
   };
 
   const allButton = q<HTMLButtonElement>('[data-act="all"]');
@@ -544,9 +624,13 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
   }
   pickButton.addEventListener('click', () =>
     busy(pickButton, async () => {
-      const res = await withLoading(() => send({ type: 'share.walk', token }));
+      const [res, stored] = await Promise.all([
+        withLoading(() => send({ type: 'share.walk', token })),
+        chrome.storage.local.get(HASHES_KEY),
+      ]);
       if (!res.ok) throw new Error(res.error);
       walked = res.data;
+      downloaded = new Set(Object.keys((stored[HASHES_KEY] as Record<string, unknown> | undefined) ?? {}));
       showShareSize(walked.files);
       list.replaceChildren(
         ...walked.files.map((f, index) => {
@@ -581,11 +665,17 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
       pickHead.hidden = false;
       search.hidden = false;
       search.value = '';
-      q('.select-all-label').textContent = 'すべて選択';
-      const selectable = markQueued();
-      const already = walked.files.length - selectable;
+      filters.hidden = false;
+      kind = null;
+      minSize.value = '0';
+      renderKinds();
+      applySearch();
+      const marked = markQueued();
       // 全体の件数とサイズは「この共有」の欄に出している
-      setStatus(already ? `うち ${already}件はキューにあり` : '');
+      const notes: string[] = [];
+      if (marked.queued) notes.push(`${marked.queued}件はキューにあり`);
+      if (marked.downloaded) notes.push(`${marked.downloaded}件はダウンロード済み`);
+      setStatus(notes.length ? `うち ${notes.join('・')}` : '');
     }),
   );
 
@@ -625,6 +715,15 @@ function setupAdding({ token, q, setStatus, busy }: PanelContext): {
   return {
     setQueue: (all) => {
       queued = new Map(all.filter((i) => i.shareToken === token).map((i) => [i.sourceFileId, i]));
+      // 省略した件は、ほかの件と同じ中身だったもの。印の元にはしない
+      queuedHashes = new Map(
+        all.filter((i) => i.shareToken !== token && i.hash && i.state !== 'skipped').map((i) => [i.hash!, i]),
+      );
+      if (walked && !list.hidden) markQueued();
+    },
+    setHashes: (hashes) => {
+      if (downloaded === null) return;
+      downloaded = new Set(Object.keys(hashes));
       if (walked && !list.hidden) markQueued();
     },
     onWalkProgress: (p) => {

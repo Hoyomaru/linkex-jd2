@@ -4,7 +4,8 @@
  * - 保存してから取る: stepCopy（保存） → stepFindCopy（コピー探し） → stepSend（JD2へ） → stepDelete（完全削除）
  * 失敗は投げ返し、件ごとの失敗の数え方は engine.ts の processItem が決める。
  */
-import { contentHash, formatBytes, unwrapFile } from '../shared/files';
+import { contentHash, formatBytes, savePathKey, unwrapFile, withNumber } from '../shared/files';
+import { hasKnownExtension, nameWithDetectedType, SNIFF_BYTES } from '../shared/media-type';
 import { cdnObjectSize } from '../shared/jd2-status';
 import type { QueueItem } from '../shared/queue';
 import { adoptHanded, findOwnCopy, handedToJd } from '../shared/scheduler';
@@ -12,7 +13,7 @@ import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
 import { addDownload, findHanded } from './jd2';
-import { isDownloaded, logEvent, readQueue, updateItem } from './store';
+import { isDownloaded, logEvent, mutateQueue, readQueue, updateItem } from './store';
 
 const COPY_TIMEOUT_MS = 5 * 60_000;
 /** 保存が終わってから、コピーが一覧に出てくるのを待つ時間 */
@@ -186,11 +187,79 @@ async function stillQueued(id: string): Promise<boolean> {
  * 渡せなかった（例外）ときも印は残し、次に進めるとき JD2 に入っていないことを確かめてから渡し直す
  */
 async function handToJd(item: QueueItem, handing: NonNullable<QueueItem['handing']>, since: number): Promise<string> {
+  const outName = await withExtension(item, handing.url);
   await updateItem(item.id, { handing });
-  const jdId = await addDownload(handing.url, { dir: item.relDir, out: item.outName });
+  const jdId = await addDownload(handing.url, { dir: item.relDir, out: outName });
   lap(item.id, 'JD2へ', since);
   runtime.jdDownSince = 0;
   return jdId;
+}
+
+/** 中身の種類を調べるのに待つ時間（間に合わなければ、名前はそのままで渡す） */
+const SNIFF_TIMEOUT_MS = 10_000;
+
+/**
+ * 保存名に拡張子が無ければ（設定「拡張子を付ける」がオンのとき）、ダウンロードURLの先頭の数バイトだけ取って
+ * 中身の種類を調べ、拡張子を付けた名前にしてキューにも書いておく（再試行でも同じ名前で取るため）。
+ * 調べられなかったときは、名前はそのまま。JD2 に渡す保存名を返す
+ */
+async function withExtension(item: QueueItem, url: string): Promise<string> {
+  if (hasKnownExtension(item.outName) || !(await loadSettings()).fixExtensions) return item.outName;
+  let head: Uint8Array;
+  try {
+    const res = await fetch(url, {
+      headers: { Range: `bytes=0-${SNIFF_BYTES - 1}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(SNIFF_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Range を無視して全部返してくる場合に備え、先頭だけ読んで切る
+    head = await readHead(res, SNIFF_BYTES);
+  } catch (e) {
+    await logEvent('warn', `中身の種類を調べられなかったため、拡張子は付けずに渡します: ${item.outName} — ${errorText(e)}`);
+    return item.outName;
+  }
+  const named = nameWithDetectedType(item.outName, head);
+  if (!named) return item.outName;
+  const outName = await mutateQueue((items) => {
+    // 同じフォルダのほかの件とぶつからない名前にする
+    const taken = new Set(items.filter((i) => i.id !== item.id).map((i) => savePathKey(i.relDir, i.outName)));
+    let name = named;
+    for (let n = 2; taken.has(savePathKey(item.relDir, name)); n++) name = withNumber(named, n);
+    const mine = items.find((i) => i.id === item.id);
+    if (mine) Object.assign(mine, { outName: name, updatedAt: Date.now() });
+    return name;
+  });
+  await logEvent('info', `中身から拡張子を付けました: ${item.outName} → ${outName}`);
+  item.outName = outName;
+  return outName;
+}
+
+/** 応答の本文を、先頭から max バイトまで読んで止める */
+async function readHead(res: Response, max: number): Promise<Uint8Array> {
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array(await res.arrayBuffer()).subarray(0, max);
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (length < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      length += value.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const out = new Uint8Array(Math.min(length, max));
+  let offset = 0;
+  for (const c of chunks) {
+    const part = c.subarray(0, out.length - offset);
+    out.set(part, offset);
+    offset += part.length;
+    if (offset >= out.length) break;
+  }
+  return out;
 }
 
 /**

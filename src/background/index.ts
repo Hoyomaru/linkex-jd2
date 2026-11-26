@@ -1,6 +1,6 @@
 import type { Request, Response, ResponseMap } from '../shared/messages';
 import { FINISHED_STATES, type QueueItem } from '../shared/queue';
-import { IN_STORAGE_STATES } from '../shared/scheduler';
+import { IN_STORAGE_STATES, setSharePriority } from '../shared/scheduler';
 import { loadSettings, saveSettings } from '../shared/settings';
 import { kick, pause, start } from './engine';
 import { refreshDownloads } from './jd-monitor';
@@ -145,6 +145,7 @@ const handlers: Handlers = {
       }
       return n;
     }),
+  'queue.prioritize': (req) => mutateQueue((items) => setSharePriority(items, req.token, req.on)),
   'queue.remove': (req) => mutateQueue((items) => removeItems(items, new Set([req.id]))),
   'queue.removeMany': (req) => mutateQueue((items) => removeItems(items, new Set(req.ids))),
   'queue.clearFinished': () =>

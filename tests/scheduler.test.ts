@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, type PickContext } from '../src/shared/scheduler.ts';
+import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, setSharePriority, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -217,4 +217,28 @@ test('渡し中のまま止まった件を拾い直す: コピーのある件は
   assert.equal(patch.jdId, '7');
   assert.equal(patch.hash, it.hash);
   assert.equal(patch.handing, undefined);
+});
+
+test('「先に落とす」を付けた共有の待ちの件から始める（同じ順位どうしはキューの順）', () => {
+  const items = [item({ shareToken: 'a' }), item({ shareToken: 'a' }), item({ shareToken: 'b' }), item({ shareToken: 'b' })];
+  setSharePriority(items, 'b', true, 1);
+  assert.deepEqual(pickStarts(items, ctx({ parallel: 3 })), [items[2].id, items[3].id, items[0].id]);
+});
+
+test('後から「先に落とす」を付けた共有ほど先になり、外すとキューの順に戻る', () => {
+  const items = [item({ shareToken: 'a' }), item({ shareToken: 'b' }), item({ shareToken: 'c' })];
+  setSharePriority(items, 'b', true, 1);
+  setSharePriority(items, 'c', true, 1);
+  assert.deepEqual(pickStarts(items, ctx()), [items[2].id, items[1].id, items[0].id]);
+  setSharePriority(items, 'c', false, 1);
+  setSharePriority(items, 'b', false, 1);
+  assert.deepEqual(pickStarts(items, ctx()), [items[0].id, items[1].id, items[2].id]);
+  assert.equal(items.some((i) => 'priority' in i), false);
+});
+
+test('終わった件には「先に落とす」を付けない', () => {
+  const items = [item({ shareToken: 'a', state: 'done' }), item({ shareToken: 'a' })];
+  assert.equal(setSharePriority(items, 'a', true, 1), 1);
+  assert.equal(items[0].priority, undefined);
+  assert.equal(items[1].priority, 1);
 });

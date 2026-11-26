@@ -36,6 +36,13 @@ export interface Settings {
   cleanupLeftovers: boolean;
   /** すべて終わったとき・止まったときにWindowsの通知を出す */
   notifications: boolean;
+  /** キューの途中でも、共有1つ分が終わったら通知を出す（notifications がオフなら出さない） */
+  notifyEachShare: boolean;
+  /**
+   * 名前に拡張子が無い（または見慣れない）ファイルは、JD2 に渡す前に先頭の数バイトだけ取って中身の種類を調べ、
+   * 拡張子を付けた名前で保存する
+   */
+  fixExtensions: boolean;
   /**
    * 右クリックメニューから追加したら、すぐ開始する。
    * ポップアップ・専用ページ・共有ページのパネルから追加したときは、それぞれの画面の「追加したら開始する」で決まる
@@ -55,6 +62,8 @@ const DEFAULT_SETTINGS: Settings = {
   directDownload: true,
   cleanupLeftovers: false,
   notifications: true,
+  notifyEachShare: true,
+  fixExtensions: true,
   autoStartOnAdd: true,
 };
 

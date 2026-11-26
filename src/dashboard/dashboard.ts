@@ -187,6 +187,8 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
   (form.elements.namedItem('cleanupLeftovers') as HTMLInputElement).checked = s.cleanupLeftovers;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
+  (form.elements.namedItem('notifyEachShare') as HTMLInputElement).checked = s.notifyEachShare;
+  (form.elements.namedItem('fixExtensions') as HTMLInputElement).checked = s.fixExtensions;
   (form.elements.namedItem('autoStartOnAdd') as HTMLInputElement).checked = s.autoStartOnAdd;
   formDirty = false;
 }
@@ -206,6 +208,8 @@ form.addEventListener('submit', async (ev) => {
     pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     cleanupLeftovers: v('cleanupLeftovers').checked,
     notifications: v('notifications').checked,
+    notifyEachShare: v('notifyEachShare').checked,
+    fixExtensions: v('fixExtensions').checked,
     autoStartOnAdd: v('autoStartOnAdd').checked,
   };
   const res = await send({ type: 'settings.set', patch });
