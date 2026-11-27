@@ -1,7 +1,7 @@
 import { judgeLogin } from '../shared/auth';
 import { describeError } from '../shared/error-text';
 import { bindLinkexApi } from '../shared/linkex-endpoints';
-import { isTransientLinkexFailure, mayRetryLinkex } from '../shared/linkex-transient';
+import { isTrafficRefusal, isTransientLinkexFailure, mayRetryLinkex } from '../shared/linkex-transient';
 import { callLinkex, LinkexLoginError } from './linkex-tab';
 
 /** 容量不足のエラーコード（Web版のコードより） */
@@ -18,6 +18,12 @@ export class LinkexError extends Error {
  * 件ごとの失敗には数えず、しばらく待ってから続ける
  */
 export class LinkexTransientError extends Error {}
+
+/**
+ * 転送量の上限に達していて、Linkex が URL の発行（file/get）を断った。
+ * 件ごとの失敗には数えず、全体で転送量が戻るのを待つ
+ */
+export class LinkexTrafficLimitError extends Error {}
 
 /** 最後に Linkex から応答を受け取れた時刻（つながらない時間を数えるため） */
 let okAt = Date.now();
@@ -45,6 +51,9 @@ async function call<T>(method: 'get' | 'post', path: string, payload?: unknown):
     }
     if (isTransientLinkexFailure(res)) {
       throw new LinkexTransientError(`Linkexが一時的に応答しません: ${path}: ${res.error}${res.status ? `（HTTP ${res.status}）` : ''}`);
+    }
+    if (isTrafficRefusal(path, res)) {
+      throw new LinkexTrafficLimitError(`転送量の上限に達したため、LinkexがURLを出しません: ${path}: ${res.error}`);
     }
     const detail = res.detail as any;
     const code = Number(detail?.code ?? NaN);

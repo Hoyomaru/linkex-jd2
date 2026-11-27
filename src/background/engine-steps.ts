@@ -10,7 +10,7 @@ import { cdnObjectSize } from '../shared/jd2-status';
 import type { QueueItem } from '../shared/queue';
 import { adoptHanded, findOwnCopy, handedToJd } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
-import { api, collectPages, DISK_SPACE_FULL, LinkexError } from './api';
+import { api, collectPages, DISK_SPACE_FULL, LinkexError, LinkexTrafficLimitError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
 import { addDownload, findHanded } from './jd2';
 import { isDownloaded, logEvent, mutateQueue, readQueue, updateItem } from './store';
@@ -105,6 +105,13 @@ async function sendDirect(item: QueueItem): Promise<boolean> {
   try {
     data = await api.shareFileGet(item.shareToken, item.sourceFileId);
   } catch (e) {
+    // 転送量の上限なら、保存しても URL は出ないので保存しない（呼び出し元が上限待ちにする）。
+    // 共有の設定で断られた場合と見分けるため、転送量を調べて尽きているときだけ上限とみなす
+    if (e instanceof LinkexTrafficLimitError) {
+      if (await trafficUsedUp()) throw e;
+      await logEvent('warn', `保存せずには取れなかったため、保存してから取ります: ${item.name} — ${errorText(e)}`);
+      return false;
+    }
     // 共有の設定などで直接は取れない（中身付きのエラー）。保存してから取る
     if (e instanceof LinkexError) {
       await logEvent('warn', `保存せずには取れなかったため、保存してから取ります: ${item.name} — ${errorText(e)}`);
@@ -129,6 +136,16 @@ async function sendDirect(item: QueueItem): Promise<boolean> {
   await logEvent('info', `JD2へ渡しました（保存なし）: ${item.relDir}\\${item.outName}`);
   await logLaps(item);
   return true;
+}
+
+/** Linkex の転送量が尽きているか（上限なし・調べられないときは false） */
+async function trafficUsedUp(): Promise<boolean> {
+  try {
+    const t = await api.traffic();
+    return t.usedTraffic >= 0 && t.totalTraffic > 0 && t.usedTraffic >= t.totalTraffic;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- 直接と保存経由で共通の部品 ----------

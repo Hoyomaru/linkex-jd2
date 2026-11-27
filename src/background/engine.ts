@@ -8,7 +8,7 @@ import { Jd2ConnectionError } from '../shared/jd2-request';
 import { FINISHED_STATES, type EngineState, type QueueItem } from '../shared/queue';
 import { IN_STORAGE_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
-import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTransientError } from './api';
+import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTrafficLimitError, LinkexTransientError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, noteJdDown, resetRuntime, runtime, sleep, stopWithNotice } from './engine-runtime';
 import { resolveHanding, stepCopy, stepDelete, stepDirect, stepFindCopy, stepSend } from './engine-steps';
 import { refreshDownloads } from './jd-monitor';
@@ -23,7 +23,9 @@ const DOWNLOADS_REFRESH_MS = 3_000;
 const TRAFFIC_RECHECK_MS = 5 * 60_000;
 /** 転送量を調べ直すまでの間（その間は、調べた残りから始めた件のサイズを引いて見込む） */
 const TRAFFIC_CACHE_MS = 60_000;
-const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中（設定で変更できます）';
+const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中';
+/** 転送量の上限で URL を断られた件に付けるメモ */
+const TRAFFIC_ITEM_NOTE = '転送量の上限待ち';
 /** 残ったコピーの片付けの間隔（容量が足りないと言われたら、次に手が空いたときすぐ片付ける） */
 const CLEANUP_INTERVAL_MS = 10 * 60_000;
 /** 容量が足りないと言われてから、新しい件を始めずに待つ時間 */
@@ -330,6 +332,12 @@ async function processItem(item: QueueItem): Promise<void> {
         await stepFindCopy(item);
         break;
       case 'copied':
+        // 転送量の上限待ちのあいだは URL を発行しない（断られるだけなので、コピーは置いたまま待つ）
+        if (Date.now() < runtime.trafficWaitUntil) {
+          if (item.note !== TRAFFIC_ITEM_NOTE) await updateItem(item.id, { note: TRAFFIC_ITEM_NOTE });
+          await sleep(IDLE_WAIT_MS);
+          return;
+        }
         await stepSend(item);
         break;
       case 'deleting':
@@ -377,6 +385,17 @@ async function processItem(item: QueueItem): Promise<void> {
       }
       await updateItem(item.id, { note: 'Linkexの応答待ち' });
       await sleep(LINKEX_RETRY_MS);
+      return;
+    }
+    if (e instanceof LinkexTrafficLimitError) {
+      // 件ごとの失敗には数えず、新しい件を始めずに待つ（保存済みのコピーは消さずに置いておく）。
+      // 待っている間に、ほかの件が同じ理由で断られてもログは1回だけ
+      if (Date.now() >= runtime.trafficWaitUntil) {
+        await logEvent('warn', `転送量の上限に達したため、LinkexがURLを出しません。転送量が戻るまで待機します（5分ごとに確認）: ${item.name}`);
+      }
+      runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
+      runtime.trafficLeft = null;
+      await updateItem(item.id, { note: TRAFFIC_ITEM_NOTE });
       return;
     }
     if (e instanceof LinkexLoginError || /AUTH_FAILED/.test(errorText(e))) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isTransientLinkexFailure, mayRetryLinkex } from '../src/shared/linkex-transient.ts';
+import { isTrafficRefusal, isTransientLinkexFailure, mayRetryLinkex } from '../src/shared/linkex-transient.ts';
 
 test('速度制限とサーバー側の不調は一時的', () => {
   assert.equal(isTransientLinkexFailure({ error: 'x', status: 429 }), true);
@@ -23,4 +23,14 @@ test('保存などの POST は、断られたと分かる 429 のときだけ呼
   assert.equal(mayRetryLinkex('post', { error: 'Network Error' }), false);
   assert.equal(mayRetryLinkex('post', { error: 'x', status: 503 }), false);
   assert.equal(mayRetryLinkex('post', { error: 'x', status: 429 }), true);
+});
+
+test('URLの発行（file/get）が forbidden で断られたら、転送量の上限とみなす', () => {
+  assert.equal(isTrafficRefusal('/api/drive/v1/file/get', { error: 'forbidden' }), true);
+  assert.equal(isTrafficRefusal('/api/drive/v1/file/get', { error: 'Forbidden', status: 403 }), true);
+});
+
+test('ほかの呼び先の forbidden や、file/get のほかのエラーは転送量の上限とみなさない', () => {
+  assert.equal(isTrafficRefusal('/api/drive/v1/file/copy', { error: 'forbidden' }), false);
+  assert.equal(isTrafficRefusal('/api/drive/v1/file/get', { error: 'not found' }), false);
 });

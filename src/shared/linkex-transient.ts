@@ -16,3 +16,11 @@ export function mayRetryLinkex(method: 'get' | 'post', f: { error: string; statu
   if (!isTransientLinkexFailure(f)) return false;
   return method === 'get' || f.status === 429;
 }
+
+/**
+ * URLの発行（file/get）が forbidden で断られたか。Linkex は転送量の上限に達すると、
+ * 共有のファイルでも自分のファイルでも URL を出さずにこう返す（運営の方針。ほかの API は上限に関係なく使える）
+ */
+export function isTrafficRefusal(path: string, f: { error: string; status?: number | null }): boolean {
+  return path === '/api/drive/v1/file/get' && (f.status === 403 || /^forbidden$/i.test(f.error.trim()));
+}
