@@ -537,3 +537,20 @@ function watchFrozen(tabId: number): { promise: Promise<never>; stop: () => void
   promise.catch(() => undefined); // 止めた後に失敗しても、未処理のエラーにしない
   return { promise, stop: () => clearInterval(timer) };
 }
+
+/**
+ * ドライブの固定タブの中で関数を1つ実行する（埋め込みが使えないときの代わり）。
+ * func は linkex-bridge.ts の関数と同じく、外の変数や関数を参照しないもの。使えなければ null
+ */
+export async function runInLinkexTab<A extends unknown[], T>(func: (...args: A) => T, args: A): Promise<{ value: T } | null> {
+  try {
+    const tabId = await ensureLinkexTab();
+    const [injection] = await withTimeout(
+      chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func, args }),
+      CALL_TIMEOUT_MS,
+    );
+    return injection ? { value: injection.result as T } : null;
+  } catch {
+    return null;
+  }
+}

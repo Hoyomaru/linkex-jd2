@@ -48,6 +48,13 @@ export interface Settings {
    * ポップアップ・専用ページ・共有ページのパネルから追加したときは、それぞれの画面の「追加したら開始する」で決まる
    */
   autoStartOnAdd: boolean;
+  /**
+   * 転送量が尽きたら、Linkex Web版に覚えさせてある別のアカウントに切り替えて続ける
+   * （期限の近いアカウントを先に使い、期限が近いアカウントは使って延ばす）
+   */
+  switchAccounts: boolean;
+  /** 切り替えに使わないアカウントの uid（新しく足したアカウントは使う） */
+  accountsDisabled: string[];
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -65,6 +72,8 @@ const DEFAULT_SETTINGS: Settings = {
   notifyEachShare: true,
   fixExtensions: true,
   autoStartOnAdd: true,
+  switchAccounts: true,
+  accountsDisabled: [],
 };
 
 const KEY = 'settings';

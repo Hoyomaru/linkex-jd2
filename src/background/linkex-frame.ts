@@ -209,3 +209,18 @@ export async function walkViaFrame(
     clearInterval(stallTimer);
   }
 }
+
+/**
+ * 埋め込みに頼みを1つ送る（アカウントの読み取り・切り替えなど）。
+ * 埋め込みが使えない・返事がなければ null（呼び出し側は固定タブで続ける）
+ */
+export async function frameRequest<T>(body: FrameRequest, timeoutMs = 5_000): Promise<{ value: T } | null> {
+  if (!(await ensureFrame())) return null;
+  try {
+    const value = await send<T | undefined>(body, timeoutMs);
+    // 返事が空なのは、埋め込みの中がまだ Linkex のページになっていないとき（頼みは送っていない）
+    return value === undefined ? null : { value };
+  } catch {
+    return null;
+  }
+}
