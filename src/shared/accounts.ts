@@ -1,3 +1,5 @@
+import type { TrafficInfo } from './estimate';
+
 /**
  * Linkex Web版に覚えさせてあるアカウントのうち、どれを使うかを決める（純粋な関数だけ）。
  * 一覧は Web版の localStorage（linkex_user_cache_v1）から読む。拡張機能はトークンを持たない。
@@ -155,4 +157,48 @@ export function accountWarnings(s: AccountsSnapshot, recs: AccountRecords, now: 
     if (!listed.has(uid)) out.push({ kind: 'gone', uid, name: rec.name ?? uid });
   }
   return out;
+}
+
+/**
+ * 見積もりに使う転送量。切り替えがオンなら、切り替えに使うアカウント全部の残りと上限を合計する
+ * （今のアカウントは /traffic の値、ほかは拡張機能が確かめた値か、Web版が最後に見た値の新しいほう。どちらも無ければ数えない）。
+ * 上限なしのアカウントがあれば、上限は分からない扱い（null）
+ */
+export function combinedTraffic(
+  view: { snapshot: AccountsSnapshot | null; records: AccountRecords; disabled: string[]; switchAccounts: boolean },
+  current: { used: number; total: number } | null,
+  now: number,
+): TrafficInfo | null {
+  const unlimited = (t: { used: number; total: number }) => t.used < 0 || t.total <= 0;
+  const s = view.snapshot;
+  if (!view.switchAccounts || !s) {
+    if (!current || unlimited(current)) return null;
+    return { usedTraffic: current.used, totalTraffic: current.total, resetTime: 0, accounts: 1 };
+  }
+  let left = 0;
+  let total = 0;
+  let accounts = 0;
+  const add = (t: { used: number; total: number }) => {
+    left += Math.max(0, t.total - t.used);
+    total += t.total;
+    accounts++;
+  };
+  if (current) {
+    if (unlimited(current)) return null;
+    add(current);
+  }
+  for (const a of s.accounts) {
+    if (a.uid === s.currentUid || !isFresh(a, now) || view.disabled.includes(a.uid)) continue;
+    const t = view.records[a.uid]?.lastTraffic ?? a.cachedTraffic;
+    if (!t) continue;
+    if (unlimited(t)) return null;
+    add(t);
+  }
+  return accounts > 0 ? { usedTraffic: total - left, totalTraffic: total, resetTime: 0, accounts } : null;
+}
+
+/** 画面に添える今のアカウント名。アカウントが1つ（または今のアカウントが一覧に無い）なら null */
+export function currentAccountName(s: AccountsSnapshot | null): string | null {
+  if (!s || s.accounts.length < 2) return null;
+  return s.accounts.find((a) => a.uid === s.currentUid)?.name ?? null;
 }

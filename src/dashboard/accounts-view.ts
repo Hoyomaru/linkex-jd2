@@ -143,17 +143,18 @@ export function setupAccountsView(log: (label: string, value?: unknown) => void)
     );
   }
 
-  /** 一覧を読み直す。今のアカウントの転送量は、呼ぶ側が取ったものを使う */
+  /** 一覧を読み直す。今のアカウントの転送量は、呼ぶ側が取ったものを使う。読めなければ null */
   let lastTraffic: { used: number; total: number } | null = null;
-  async function refresh(currentTraffic?: { used: number; total: number } | null) {
+  async function refresh(currentTraffic?: { used: number; total: number } | null): Promise<AccountsView | null> {
     if (currentTraffic !== undefined) lastTraffic = currentTraffic;
     const res = await send({ type: 'accounts.list' });
     if (!res.ok) {
       empty.hidden = false;
       empty.textContent = `アカウントを読めませんでした: ${res.error}`;
-      return;
+      return null;
     }
     render(res.data, lastTraffic);
+    return res.data;
   }
 
   return { refresh };

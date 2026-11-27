@@ -163,7 +163,8 @@ async function runLoop(): Promise<void> {
     let picks = pickStarts(items, { ...ctx, allowNew });
     const newPicks = waiting.filter((w) => picks.includes(w.id));
     const newBytes = newPicks.reduce((sum, w) => sum + (w.size ?? 0), 0);
-    if (newPicks.length > 0 && settings.pauseOnTrafficLimit && (await trafficExhausted(newBytes))) {
+    // 新しい件を始める前に、転送量の残りを確かめる（1分に1回まで。その間は残りから始めた件のサイズを引いて見込む）
+    if (newPicks.length > 0 && (await trafficExhausted(newBytes))) {
       // 別のアカウントに切り替えられるなら、切り替えの準備に入る。切り替えられなければ待つ
       if (!(await onTrafficExhausted())) {
         // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、

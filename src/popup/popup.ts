@@ -3,6 +3,7 @@ import { type TrafficInfo } from '../shared/estimate';
 import { bytesText, countChips, countText, etaText, leftText, overviewOf, percentHtml, renderEstimate, setMeter, speedText } from '../ui/summary';
 import { linkexApi } from '../shared/linkex-api';
 import { send } from '../shared/messages';
+import { combinedTraffic, currentAccountName } from '../shared/accounts';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
 import { ENGINE_KEY, GROUP_OF, QUEUE_KEY, STATE_LABELS, type EngineState, type QueueItem } from '../shared/queue';
 import { engineView, pollJd, toProgressMap, type LiveProgress } from '../ui/live';
@@ -317,6 +318,14 @@ pollJd((live, error) => {
     setMeter($('usage-bar'), usage.usedSpace, usage.totalSpace);
     $('traffic').textContent = `${formatBytes(t.usedTraffic)} / ${formatBytes(t.totalTraffic)}`;
     setMeter($('traffic-bar'), t.usedTraffic, t.totalTraffic);
+    // アカウントが2つ以上なら、転送量がどのアカウントのものかを添え、見積もりは切り替えに使うアカウント全部の残りで出す
+    const accounts = await send({ type: 'accounts.list' });
+    if (accounts.ok) {
+      const name = currentAccountName(accounts.data.snapshot);
+      if (name) $('traffic-label').textContent = `転送量（${name}）`;
+      traffic = combinedTraffic(accounts.data, { used: t.usedTraffic, total: t.totalTraffic }, Date.now()) ?? t;
+      render();
+    }
   } catch (e) {
     $('usage').textContent = '取得できません';
     $('usage').title = (e as Error).message;

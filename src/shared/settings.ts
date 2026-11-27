@@ -5,8 +5,6 @@ export interface Settings {
   downloadDir: string;
   /** Linkex APIを呼ぶ間隔（ミリ秒）。一時的な速度制限を避けるため */
   apiIntervalMs: number;
-  /** 公式Web版と同じく、転送量の上限に達したら一時停止する */
-  pauseOnTrafficLimit: boolean;
   /** JD2に渡しておく数（URLには期限があるので、JD2の中で長く待たせないよう、渡すのはこの数まで） */
   maxDownloads: number;
   /**
@@ -61,7 +59,6 @@ const DEFAULT_SETTINGS: Settings = {
   jdUrl: 'http://127.0.0.1:3128',
   downloadDir: '',
   apiIntervalMs: 300,
-  pauseOnTrafficLimit: true,
   maxDownloads: 3,
   parallelItems: 3,
   forceStart: false,
@@ -80,10 +77,11 @@ const KEY = 'settings';
 
 export async function loadSettings(): Promise<Settings> {
   const stored = await chrome.storage.local.get(KEY);
-  // Motrix版の設定（rpcUrl・rpcSecret）は使わないので落とす
-  const { rpcUrl: _url, rpcSecret: _secret, ...rest } = (stored[KEY] ?? {}) as Partial<Settings> & {
+  // 使わなくなった設定は落とす（Motrix版の rpcUrl・rpcSecret、いつも確かめるようにした pauseOnTrafficLimit）
+  const { rpcUrl: _url, rpcSecret: _secret, pauseOnTrafficLimit: _pause, ...rest } = (stored[KEY] ?? {}) as Partial<Settings> & {
     rpcUrl?: string;
     rpcSecret?: string;
+    pauseOnTrafficLimit?: boolean;
   };
   return { ...DEFAULT_SETTINGS, ...rest };
 }

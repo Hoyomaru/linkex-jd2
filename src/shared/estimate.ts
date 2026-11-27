@@ -6,6 +6,8 @@ export interface TrafficInfo {
   usedTraffic: number;
   totalTraffic: number;
   resetTime: number;
+  /** 何アカウント分の合計か（切り替えに使うアカウントを合わせたとき。無ければ1） */
+  accounts?: number;
 }
 
 /** これから落とす量の見積もり */
@@ -22,6 +24,8 @@ export interface Estimate {
     total: number;
     /** 今の転送量の残りで足りるか */
     fits: boolean;
+    /** 何アカウント分の合計か */
+    accounts: number;
     /** 足りないとき、上限ごとに止まりながら全部終わるまでのおおよその日数（24時間を1日とする） */
     days: number;
   } | null;
@@ -43,7 +47,7 @@ export function estimateRemaining(items: QueueItem[], summary: QueueSummary, tra
     const left = Math.max(0, traffic.totalTraffic - traffic.usedTraffic);
     const fits = bytes <= left;
     const days = fits ? 0 : Math.ceil((bytes - left) / traffic.totalTraffic);
-    t = { left, total: traffic.totalTraffic, fits, days };
+    t = { left, total: traffic.totalTraffic, fits, days, accounts: traffic.accounts ?? 1 };
   }
   return { bytes, files, unknown, traffic: t };
 }
@@ -58,10 +62,12 @@ export function estimateHeadline(e: Estimate): string {
 export function estimateTrafficLine(e: Estimate): { text: string; kind: 'ok' | 'warn' | 'muted' } {
   if (e.files === 0) return { text: '', kind: 'muted' };
   if (!e.traffic) return { text: '転送量の上限は確認できていません', kind: 'muted' };
-  const { left, total, fits, days } = e.traffic;
-  if (fits) return { text: `転送量の残り ${formatBytes(left)} で足ります`, kind: 'ok' };
+  const { left, total, fits, days, accounts } = e.traffic;
+  // 切り替えに使うアカウントが複数なら、合計だと分かるように書く
+  const whose = accounts > 1 ? `アカウント${accounts}つの転送量の残り` : '転送量の残り';
+  if (fits) return { text: `${whose} ${formatBytes(left)} で足ります`, kind: 'ok' };
   return {
-    text: `転送量の残り ${formatBytes(left)} では足りません。上限（24時間で ${formatBytes(total)}）ごとに止まりながら、あと約${days}日`,
+    text: `${whose} ${formatBytes(left)} では足りません。上限（24時間で${accounts > 1 ? '合計 ' : ' '}${formatBytes(total)}）ごとに止まりながら、あと約${days}日`,
     kind: 'warn',
   };
 }

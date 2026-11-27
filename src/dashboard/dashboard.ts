@@ -4,6 +4,7 @@ import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
 import { setupAccountsView } from './accounts-view';
+import { combinedTraffic, currentAccountName } from '../shared/accounts';
 import { setMeter } from '../ui/summary';
 import { secondPress } from '../ui/confirm';
 import { HASHES_KEY } from '../shared/queue';
@@ -106,12 +107,14 @@ async function refreshLinkex() {
     const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
     $('usage-text').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
     setMeter($('usage-bar'), usage.usedSpace, usage.totalSpace);
-    const reset = traffic.resetTime ? new Date(traffic.resetTime * 1000).toLocaleString() : '-';
     $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
-    queueView.setTraffic(traffic);
-    $('traffic-metric').title = `直近24時間の転送量（目安）。リセット ${reset}`;
     setMeter($('traffic-bar'), traffic.usedTraffic, traffic.totalTraffic);
-    void accountsView.refresh({ used: traffic.usedTraffic, total: traffic.totalTraffic });
+    queueView.setTraffic(traffic);
+    const current = { used: traffic.usedTraffic, total: traffic.totalTraffic };
+    const view = await accountsView.refresh(current);
+    // 見積もりは、切り替えに使うアカウント全部の残りで出す
+    if (view) queueView.setTraffic(combinedTraffic(view, current, Date.now()));
+    showAccountName(currentAccountName(view?.snapshot ?? null));
   } catch (e) {
     void accountsView.refresh(null);
     $('usage-text').textContent = '取得できません';
@@ -121,6 +124,14 @@ async function refreshLinkex() {
   }
 }
 action($('linkex-refresh'), refreshLinkex);
+
+/** アカウントが2つ以上のときは、上部の転送量と確認用タブに今のアカウント名を添える */
+function showAccountName(name: string | null) {
+  $('traffic-label').textContent = name ? `転送量（${name}・直近24時間）` : '転送量（直近24時間・目安）';
+  const tools = $('tools-account');
+  tools.hidden = !name;
+  tools.textContent = name ? `今のアカウント：${name}（自分のファイル・ゴミ箱・URLの確認は、このアカウントのものです）` : '';
+}
 action($('linkex-open'), async () => {
   const res = await send({ type: 'linkex.openTab' });
   if (!res.ok) throw new Error(res.error);
@@ -188,7 +199,6 @@ async function loadSettingsIntoForm() {
   (form.elements.namedItem('prefetchItems') as HTMLInputElement).value = String(s.prefetchItems);
   (form.elements.namedItem('directDownload') as HTMLInputElement).checked = s.directDownload;
   (form.elements.namedItem('forceStart') as HTMLInputElement).checked = s.forceStart;
-  (form.elements.namedItem('pauseOnTrafficLimit') as HTMLInputElement).checked = s.pauseOnTrafficLimit;
   (form.elements.namedItem('cleanupLeftovers') as HTMLInputElement).checked = s.cleanupLeftovers;
   (form.elements.namedItem('notifications') as HTMLInputElement).checked = s.notifications;
   (form.elements.namedItem('notifyEachShare') as HTMLInputElement).checked = s.notifyEachShare;
@@ -209,7 +219,6 @@ form.addEventListener('submit', async (ev) => {
     directDownload: v('directDownload').checked,
     forceStart: v('forceStart').checked,
     prefetchItems: clampField(form, 'prefetchItems', '先に保存しておく数', 0, 3, adjusted),
-    pauseOnTrafficLimit: v('pauseOnTrafficLimit').checked,
     cleanupLeftovers: v('cleanupLeftovers').checked,
     notifications: v('notifications').checked,
     notifyEachShare: v('notifyEachShare').checked,

@@ -31,8 +31,8 @@
             <span class="value" id="usage-text">-</span>
             <div class="meter"><div id="usage-bar" style="width: 0"></div></div>
           </div>
-          <div class="metric wide" id="traffic-metric">
-            <span class="label">転送量（直近24時間・目安）</span>
+          <div class="metric wide" id="traffic-metric" title="今使っているアカウントの、直近24時間の転送量（目安）">
+            <span class="label" id="traffic-label">転送量（直近24時間・目安）</span>
             <span class="value" id="traffic-text">-</span>
             <div class="meter"><div id="traffic-bar" style="width: 0"></div></div>
           </div>
@@ -143,7 +143,6 @@
               <label>APIを呼ぶ間隔（ミリ秒）<input type="number" name="apiIntervalMs" min="0" step="50" /></label>
               <label class="check full"><input type="checkbox" name="forceStart" /> JD2に渡した件を「強制ダウンロード開始」にする（JD2の同時ダウンロード数の設定を超えて、「JD2に渡しておく数」まで同時に落とす。JD2をほかの用途と共用していて、JD2の設定を変えたくないとき向け）</label>
               <label class="check full"><input type="checkbox" name="directDownload" /> 自分のストレージに保存せず、共有から直接ダウンロードURLを発行してJD2へ渡す（速い。直接取れなかった件だけ、保存してから取る。「先に保存しておく数」は保存して取るときだけ使う）</label>
-              <label class="check full"><input type="checkbox" name="pauseOnTrafficLimit" /> 転送量の上限に達したら一時停止する（公式Web版と同じ動き。転送量の確認は1分に1回まで。オフにすると確認も省く）</label>
               <label class="check full"><input type="checkbox" name="cleanupLeftovers" /> 自分のストレージ（ルートとゴミ箱）に残ったファイルを、処理の合間に完全削除する（保存前からあったファイルも消える。アカウントを切り替えて使うときは、切り替えたアカウントごとに消える。自分のファイルを置いていないときだけオンにする）</label>
               <label class="check full"><input type="checkbox" name="fixExtensions" /> 名前に拡張子が無いファイルは、JD2に渡す前に中身の種類を調べて拡張子を付ける（先頭の数バイトだけ取って調べる。画像・動画・音声・PDF・ZIPの主な形式）</label>
               <label class="check full"><input type="checkbox" name="notifications" /> すべて終わったとき・止まったときにWindowsの通知を出す</label>
@@ -160,19 +159,24 @@
 
         <section class="panel" style="margin-top: 16px">
           <h2>Linkex</h2>
-          <p class="hint">署名のために、固定タブでLinkexのドライブを開いています。ログインが切れたときは、このタブでログインし直してください。</p>
+          <p class="hint">ふだんは拡張機能の裏で Linkex のドライブを開いて使います（画面には出ません）。ログインが切れたときは「Linkexのタブを表示」で開いたタブでログインし直してください。</p>
           <div class="row">
             <button id="linkex-open">Linkexのタブを表示</button>
             <button id="linkex-refresh">容量・転送量を更新</button>
           </div>
-          <h3 class="sub-heading">アカウント</h3>
+        </section>
+
+        <section class="panel" style="margin-top: 16px">
+          <h2>Linkex アカウント</h2>
+          <p class="hint" style="margin-top: 0">この欄は、変えるとすぐ保存されます（上の「保存」は要りません）。</p>
           <label class="check full"><input type="checkbox" id="switch-accounts" /> 転送量が尽きたら別のアカウントに切り替える（期限の近いアカウントから使う。今使っていないアカウントは、1時間ごとに期限を延ばし、尽きたものは転送量が戻ったかを確かめる）</label>
           <table id="accounts-table" class="accounts-table" hidden>
             <thead><tr><th>切り替えに使う</th><th></th><th>転送量</th><th>期限</th></tr></thead>
             <tbody></tbody>
           </table>
           <p id="accounts-empty" class="hint" hidden></p>
-          <p class="hint">アカウントの足し方：Linkex で右上のアイコン →「ログアウト」→ 別のアカウントでログインすると、ここに足されます。拡張機能が使う Linkex（このブラウザ）で行ってください。期限は Linkex が最後にログイン情報を更新してから20日です。</p>
+          <p class="hint">アカウントの足し方：Linkex で右上のアイコン →「ログアウト」→ 別のアカウントでログインすると、ここに足されます。拡張機能が使う Linkex（このブラウザ）で行ってください。外すときは、Linkex の「アカウントを切り替え」→「編集」で外します。</p>
+          <p class="hint">期限：Linkex は、ログイン情報が更新されてから20日たったアカウントを一覧から消します。今使っていないアカウントは、拡張機能が1時間ごとの見回りで期限を延ばします（Edge を開いていれば、処理を動かしていなくても）。</p>
         </section>
 
         <section class="panel" style="margin-top: 16px">
@@ -188,6 +192,7 @@
       <!-- ========== 確認用 ========== -->
       <div data-page="tools" class="page" hidden>
         <p class="note">Linkex・JD2の動きを1つずつ試すための画面です。ふだんは使いません。</p>
+        <p class="note" id="tools-account" hidden></p>
 
         <section class="panel">
           <h2>1. 共有リンクの中身</h2>
