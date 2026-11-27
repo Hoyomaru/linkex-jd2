@@ -1,3 +1,4 @@
+import type { AccountsSnapshot } from '../shared/accounts';
 import type { WalkedFile } from '../shared/walk';
 
 /**
@@ -270,4 +271,96 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
       authEntries,
     };
   }
+}
+
+/**
+ * Web版に覚えさせてあるアカウントの一覧を読む（ページ内で実行）。トークンの中身は返さない。
+ * linkexBridgeCall と同じく、外の変数や関数を参照してはいけない。
+ * 一覧が無い・読めなければ null
+ */
+export function linkexReadAccounts(): AccountsSnapshot | null {
+  let root: any;
+  try {
+    const raw = localStorage.getItem('linkex_user_cache_v1');
+    if (raw === null) return null;
+    root = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!root || typeof root !== 'object') return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0);
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const users = root.users && typeof root.users === 'object' ? root.users : {};
+  const accounts = Object.entries(users).map(([uid, value]) => {
+    const u: any = value && typeof value === 'object' ? value : {};
+    const profile = u.profile && typeof u.profile === 'object' ? u.profile : {};
+    const cred = u.credentials && typeof u.credentials === 'object' ? u.credentials : {};
+    const meta = u._meta && typeof u._meta === 'object' ? u._meta : {};
+    const space = u['system.storageSpace'];
+    const email = str(profile.email).trim();
+    const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : meta.updatedAt;
+    return {
+      uid,
+      name: str(profile.nickname).trim() || email || uid,
+      email,
+      status: u.sessionStatus === 'online' || u.sessionStatus === 'logged_out' ? u.sessionStatus : null,
+      stampAt: typeof stamp === 'number' && Number.isFinite(stamp) ? stamp : 0,
+      hasSecret: (typeof cred.token === 'string' && cred.token !== '') || (typeof cred.refreshToken === 'string' && cred.refreshToken !== ''),
+      cachedTraffic:
+        space && typeof space === 'object' && space.totalTraffic != null
+          ? { used: num(space.usedTraffic), total: num(space.totalTraffic) }
+          : null,
+    } as AccountsSnapshot['accounts'][number];
+  });
+  return { currentUid: typeof root.currentUid === 'string' ? root.currentUid : null, accounts };
+}
+
+/**
+ * Web版の「アカウントを切り替え」（setActiveCachedUser と switchToCachedAccount）と同じ書き換えをして、
+ * ほかのタブに知らせる（ページ内で実行）。外の変数や関数を参照してはいけない。
+ * 切り替え先が無い・期限切れ・ログイン情報が無いときは、何も書き換えずに断る
+ */
+export function linkexSwitchAccount(
+  toUid: string,
+  now: number,
+): { ok: true; fromUid: string | null } | { ok: false; error: 'not_found' | 'expired' | 'no_secret' | 'unreadable' } {
+  const KEY = 'linkex_user_cache_v1';
+  /** Web版の REFRESH_TOKEN_MEMORY_MS（shared/accounts.ts と同じ値） */
+  const MEMORY_MS = 480 * 60 * 60 * 1000;
+  let root: any;
+  try {
+    root = JSON.parse(localStorage.getItem(KEY) ?? '');
+  } catch {
+    return { ok: false, error: 'unreadable' };
+  }
+  if (!root || typeof root !== 'object') return { ok: false, error: 'unreadable' };
+  const users: Record<string, any> = root.users && typeof root.users === 'object' ? root.users : {};
+  const target = users[toUid];
+  if (!target || typeof target !== 'object') return { ok: false, error: 'not_found' };
+  const cred = target.credentials && typeof target.credentials === 'object' ? target.credentials : {};
+  if (!cred.token && !cred.refreshToken) return { ok: false, error: 'no_secret' };
+  const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : target._meta?.updatedAt;
+  if (typeof stamp === 'number' && stamp > 0 && now - stamp > MEMORY_MS) return { ok: false, error: 'expired' };
+
+  const fromUid = typeof root.currentUid === 'string' ? root.currentUid : null;
+  const next: Record<string, any> = {};
+  for (const [uid, u] of Object.entries(users)) {
+    if (uid === toUid) {
+      const meta = u._meta && typeof u._meta === 'object' ? u._meta : {};
+      next[uid] = { ...u, sessionStatus: 'online', _meta: { ...meta, updatedAt: now, version: meta.version ?? 1 } };
+    } else if (u && typeof u === 'object' && u.sessionStatus !== 'logged_out') {
+      next[uid] = { ...u, sessionStatus: 'logged_out' };
+    } else {
+      next[uid] = u;
+    }
+  }
+  localStorage.setItem(KEY, JSON.stringify({ ...root, currentUid: toUid, users: next }));
+  try {
+    const channel = new BroadcastChannel('linkex-auth');
+    channel.postMessage({ type: 'ACCOUNT_SWITCHED', fromUid, toUid, at: now, reason: 'manual-switch' });
+    channel.close();
+  } catch {
+    // 知らせが送れなくても、ほかのタブは localStorage の変化で気づく
+  }
+  return { ok: true, fromUid };
 }

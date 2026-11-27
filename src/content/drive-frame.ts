@@ -1,4 +1,10 @@
-import { linkexBridgeCall, linkexBridgeWalkShare, type BridgeRequest } from '../background/linkex-bridge';
+import {
+  linkexBridgeCall,
+  linkexBridgeWalkShare,
+  linkexReadAccounts,
+  linkexSwitchAccount,
+  type BridgeRequest,
+} from '../background/linkex-bridge';
 
 /**
  * 拡張機能の裏のページ（offscreen.html）に埋め込まれた Linkex のドライブの中で動く（MAIN world）。
@@ -10,7 +16,11 @@ export type FrameRequest =
   | { kind: 'call'; req: BridgeRequest }
   | { kind: 'walk'; token: string; concurrency: number }
   | { kind: 'progress'; token: string }
-  | { kind: 'diag'; since: number };
+  | { kind: 'diag'; since: number }
+  /** Web版に覚えさせてあるアカウントの一覧（トークンは返さない） */
+  | { kind: 'accounts' }
+  /** Web版と同じ書き換えでアカウントを切り替える */
+  | { kind: 'switch'; toUid: string; now: number };
 
 /** 処理中の呼び出し（返事がないときに、どこまで進んだかを診断で返す） */
 const inflight = new Map<number, { path: string; stage: string; at: number }>();
@@ -76,6 +86,10 @@ async function handle(body: FrameRequest): Promise<unknown> {
     }
     case 'walk':
       return linkexBridgeWalkShare(body.token, body.concurrency);
+    case 'accounts':
+      return linkexReadAccounts();
+    case 'switch':
+      return linkexSwitchAccount(body.toUid, body.now);
     case 'progress': {
       const p = (window as any).__linkexJd2WalkProgress?.[body.token];
       return p && !p.done ? { files: p.files, bytes: p.bytes, folders: p.folders } : null;
