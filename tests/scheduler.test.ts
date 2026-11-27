@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, setSharePriority, stateAfterDelete, type PickContext } from '../src/shared/scheduler.ts';
+import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, resetAfterSwitch, setSharePriority, stateAfterDelete, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -265,4 +265,21 @@ test('stateAfterDelete: 重複なら skipped', () => {
 test('stateAfterDelete: それ以外は retry、試した回数が上限なら error', () => {
   assert.equal(stateAfterDelete(item({ state: 'deleting', attempts: 1 }), 3).state, 'retry');
   assert.equal(stateAfterDelete(item({ state: 'deleting', attempts: 3 }), 3).state, 'error');
+});
+
+test('resetAfterSwitch: JD2に渡し済みならダウンロード中にし、前のアカウントのコピーの印を外す', () => {
+  const next = resetAfterSwitch(item({ state: 'deleting', jdId: 'j', destFileId: 'd', beforeIds: ['x'], requeueAfterDelete: true }));
+  assert.equal(next.state, 'downloading');
+  assert.equal(next.destFileId, undefined);
+  assert.equal('destFileId' in next, true);
+  assert.equal('beforeIds' in next, true);
+  assert.equal('requeueAfterDelete' in next, true);
+});
+
+test('resetAfterSwitch: それ以外は待機中に戻し、試した回数は変えない', () => {
+  const next = resetAfterSwitch(item({ state: 'copied', destFileId: 'd', copiedAt: 5, attempts: 2 }));
+  assert.equal(next.state, 'pending');
+  assert.equal('attempts' in next, false);
+  assert.equal('destFileId' in next, true);
+  assert.equal('copiedAt' in next, true);
 });

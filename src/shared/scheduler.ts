@@ -149,6 +149,24 @@ export function pickLeftovers<T extends { id: unknown }>(files: T[], claimed: Se
   return files.filter((f) => f.id !== undefined && f.id !== null && !isFolder(f) && !claimed.has(String(f.id)));
 }
 
+/**
+ * アカウントが切り替わったとき、Linkex 側で処理中だった件をどうするか。
+ * 前のアカウントのコピーは新しいアカウントでは使えないので、コピーの印を外す。
+ * JD2 に渡し済みならダウンロード中に、それ以外は待機中に戻す（試した回数は変えない）
+ */
+export function resetAfterSwitch(item: QueueItem): Pick<QueueItem, 'state'> & Partial<QueueItem> {
+  const copy = { destFileId: undefined, beforeIds: undefined, requeueAfterDelete: undefined };
+  if (item.jdId) {
+    return {
+      ...copy,
+      state: 'downloading',
+      deleteAttempts: undefined,
+      note: 'コピーを削除できませんでした（前のアカウントのストレージに残っています）',
+    };
+  }
+  return { ...copy, state: 'pending', copyStartedAt: undefined, copiedAt: undefined, duplicate: undefined, note: undefined };
+}
+
 /** 重複で省く件のメモ（古い版では、保存経由の件の目印にもこの文言を使っていた） */
 export const DUPLICATE_NOTE = '同じ中身をダウンロード済み';
 

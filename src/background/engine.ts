@@ -6,7 +6,7 @@
 import { formatBytes, isFolder, unwrapFile } from '../shared/files';
 import { Jd2ConnectionError } from '../shared/jd2-request';
 import { FINISHED_STATES, type EngineState, type QueueItem } from '../shared/queue';
-import { IN_STORAGE_STATES, pickLeftovers, pickStarts } from '../shared/scheduler';
+import { IN_STORAGE_STATES, pickLeftovers, pickStarts, resetAfterSwitch } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTrafficLimitError, LinkexTransientError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, noteJdDown, resetRuntime, runtime, sleep, stopWithNotice } from './engine-runtime';
@@ -580,38 +580,7 @@ async function advanceSwitch(prepCount: number): Promise<boolean> {
 /** アカウントを切り替え、転送量や容量の見込みを捨てて続ける */
 async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<void> {
   const now = Date.now();
-  // 片付けが間に合わなかった件は、前のアカウントのコピーの印を外す（新しいアカウントでは使えないため）
-  const leftovers = (await readQueue()).filter((i) => IN_STORAGE_STATES.includes(i.state));
-  for (const i of leftovers) {
-    await updateItem(
-      i.id,
-      i.jdId
-        ? {
-            state: 'downloading',
-            destFileId: undefined,
-            beforeIds: undefined,
-            deleteAttempts: undefined,
-            requeueAfterDelete: undefined,
-            note: 'コピーを削除できませんでした（前のアカウントのストレージに残っています）',
-          }
-        : {
-            state: 'pending',
-            destFileId: undefined,
-            beforeIds: undefined,
-            copyStartedAt: undefined,
-            copiedAt: undefined,
-            duplicate: undefined,
-            requeueAfterDelete: undefined,
-            note: undefined,
-          },
-    );
-  }
-  if (leftovers.length > 0) {
-    await logEvent(
-      'warn',
-      `切り替えの前に片付けが終わらなかった ${leftovers.length}件は、前のアカウントにコピーが残っている場合があります（新しいアカウントで取り直します）`,
-    );
-  }
+  await releaseOldCopies('切り替えの前に片付けが終わらなかった');
 
   const before = await readAccounts();
   const stamp = before?.accounts.find((a) => a.uid === sw.to)?.stampAt ?? 0;
@@ -662,7 +631,9 @@ async function watchAccounts(switchOn: boolean, disabled: string[]): Promise<voi
 
   if (knownUid !== null && s.currentUid !== knownUid) {
     await logEvent('info', `Linkexのアカウントが ${accountName(s, s.currentUid)} に切り替えられたので、そのアカウントで続けます`);
+    await releaseOldCopies('ほかで切り替えられたときに Linkex 側で処理中だった');
     runtime.trafficWaitUntil = 0;
+    runtime.cleanedAt = 0;
     runtime.trafficLeft = null;
     runtime.budget = null;
     runtime.resumeHint = null;
@@ -712,5 +683,20 @@ async function maybeResume(): Promise<void> {
   if (next && next.at <= now && next.uid !== s.currentUid) {
     runtime.switching = { reason: 'traffic', since: now, to: next.uid };
     await logEvent('info', `${accountName(s, next.uid)} の転送量が戻っている見込みなので、切り替えて確かめます`);
+  }
+}
+
+/**
+ * アカウントが切り替わったとき、Linkex 側で処理中だった件から前のアカウントのコピーの印を外す
+ * （新しいアカウントでは使えないため。JD2 に渡し済みの件は見届けを続け、それ以外は新しいアカウントで取り直す）
+ */
+async function releaseOldCopies(why: string): Promise<void> {
+  const leftovers = (await readQueue()).filter((i) => IN_STORAGE_STATES.includes(i.state));
+  for (const i of leftovers) await updateItem(i.id, resetAfterSwitch(i));
+  if (leftovers.length > 0) {
+    await logEvent(
+      'warn',
+      `${why} ${leftovers.length}件は、前のアカウントにコピーが残っている場合があります（新しいアカウントで取り直します）`,
+    );
   }
 }

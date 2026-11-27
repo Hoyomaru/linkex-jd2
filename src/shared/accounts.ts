@@ -10,7 +10,10 @@ export interface LinkexAccount {
   name: string;
   email: string;
   status: 'online' | 'logged_out' | null;
-  /** 期限の基準時刻（refreshTokenUpdatedAt、無ければ _meta.updatedAt）。分からなければ 0 */
+  /**
+   * 期限の基準時刻（refreshTokenUpdatedAt、無ければ _meta.updatedAt）。
+   * 無ければ 0（Web版と同じく期限なし）、あっても数値でなければ -1（Web版と同じく期限切れ）
+   */
   stampAt: number;
   /** token か refreshToken があるか */
   hasSecret: boolean;
@@ -55,8 +58,9 @@ export const KEEP_ALIVE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 const HOUR = 60 * 60 * 1000;
 
-/** Web版が一覧から消す時刻。基準時刻が分からなければ期限なし（Web版と同じ扱い） */
+/** Web版が一覧から消す時刻。基準時刻が無ければ期限なし、読めなければ期限切れ（Web版と同じ扱い） */
 export function expiresAt(a: LinkexAccount): number {
+  if (a.stampAt < 0) return -Infinity;
   return a.stampAt > 0 ? a.stampAt + REFRESH_TOKEN_MEMORY_MS : Infinity;
 }
 

@@ -120,3 +120,7 @@ test('accountWarnings: 期限が近い・延命に失敗・一覧から消えた
     { kind: 'gone', uid: 'GONE', name: 'ごーん' },
   ]);
 });
+
+test('isFresh: 時刻が読めない（-1）なら使わない', () => {
+  assert.equal(isFresh(acc('A', { stampAt: -1 }), now), false);
+});

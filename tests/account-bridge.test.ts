@@ -88,7 +88,7 @@ test('parse: 形の崩れた値', () => {
   fakePage(JSON.stringify({ currentUid: '1', users: { '1': { profile: 'x', _meta: { updatedAt: 'x' } } } }));
   assert.deepEqual(linkexReadAccounts(), {
     currentUid: '1',
-    accounts: [{ uid: '1', name: '1', email: '', status: null, stampAt: 0, hasSecret: false, cachedTraffic: null }],
+    accounts: [{ uid: '1', name: '1', email: '', status: null, stampAt: -1, hasSecret: false, cachedTraffic: null }],
   });
 
   fakePage('{not json');
@@ -135,4 +135,21 @@ test('switch: 無い uid・ログイン情報なし', () => {
   assert.deepEqual(page.posted, []);
   fakePage('{bad');
   assert.deepEqual(linkexSwitchAccount('1', now), { ok: false, error: 'unreadable' });
+});
+
+test('switch: 時刻が数値でなければ期限切れとして断る（Web版と同じ）', () => {
+  const c = cache();
+  (c.users['1'].credentials as any).refreshTokenUpdatedAt = '2026-11-01T00:00:00Z';
+  (c.users['1'] as any)._meta.updatedAt = '2026-11-01T00:00:00Z';
+  const page = fakePage(JSON.stringify(c));
+  assert.deepEqual(linkexSwitchAccount('1', now), { ok: false, error: 'expired' });
+  assert.deepEqual(page.posted, []);
+});
+
+test('parse: 時刻が無ければ 0（Web版と同じく期限なし）', () => {
+  const c = cache();
+  delete (c.users['1'].credentials as any).refreshTokenUpdatedAt;
+  delete (c.users['1'] as any)._meta;
+  fakePage(JSON.stringify(c));
+  assert.equal(linkexReadAccounts()!.accounts[0].stampAt, 0);
 });

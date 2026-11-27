@@ -27,6 +27,7 @@ function trafficText(a: LinkexAccount, rec: AccountRecord | undefined, current: 
 
 function expiryText(a: LinkexAccount): { text: string; warn: boolean } {
   const left = expiresAt(a) - Date.now();
+  if (left === -Infinity) return { text: '期限が読めないため使いません', warn: true };
   if (!Number.isFinite(left)) return { text: '期限 不明', warn: false };
   if (left <= 0) return { text: '期限切れ', warn: true };
   const days = Math.floor(left / (24 * HOUR));

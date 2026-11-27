@@ -298,13 +298,14 @@ export function linkexReadAccounts(): AccountsSnapshot | null {
     const meta = u._meta && typeof u._meta === 'object' ? u._meta : {};
     const space = u['system.storageSpace'];
     const email = str(profile.email).trim();
-    const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : meta.updatedAt;
+    // Web版（credentialStamp）と同じ。時刻が無ければ期限なし（0）、あっても数値でなければ期限切れ扱い（-1）
+    const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : (meta.updatedAt ?? 0);
     return {
       uid,
       name: str(profile.nickname).trim() || email || uid,
       email,
       status: u.sessionStatus === 'online' || u.sessionStatus === 'logged_out' ? u.sessionStatus : null,
-      stampAt: typeof stamp === 'number' && Number.isFinite(stamp) ? stamp : 0,
+      stampAt: typeof stamp === 'number' && Number.isFinite(stamp) ? stamp : -1,
       hasSecret: (typeof cred.token === 'string' && cred.token !== '') || (typeof cred.refreshToken === 'string' && cred.refreshToken !== ''),
       cachedTraffic:
         space && typeof space === 'object' && space.totalTraffic != null
@@ -339,8 +340,11 @@ export function linkexSwitchAccount(
   if (!target || typeof target !== 'object') return { ok: false, error: 'not_found' };
   const cred = target.credentials && typeof target.credentials === 'object' ? target.credentials : {};
   if (!cred.token && !cred.refreshToken) return { ok: false, error: 'no_secret' };
-  const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : target._meta?.updatedAt;
-  if (typeof stamp === 'number' && stamp > 0 && now - stamp > MEMORY_MS) return { ok: false, error: 'expired' };
+  // Web版の isRememberedAccountFresh と同じ。時刻が無ければ期限なし、数値でなければ期限切れ
+  const stamp = typeof cred.refreshTokenUpdatedAt === 'number' ? cred.refreshTokenUpdatedAt : (target._meta?.updatedAt ?? 0);
+  if (typeof stamp !== 'number' || !Number.isFinite(stamp) || (stamp !== 0 && now - stamp > MEMORY_MS)) {
+    return { ok: false, error: 'expired' };
+  }
 
   const fromUid = typeof root.currentUid === 'string' ? root.currentUid : null;
   const next: Record<string, any> = {};
