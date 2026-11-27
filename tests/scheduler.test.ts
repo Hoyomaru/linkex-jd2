@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, setSharePriority, type PickContext } from '../src/shared/scheduler.ts';
+import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, setSharePriority, stateAfterDelete, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -241,4 +241,28 @@ test('終わった件には「先に落とす」を付けない', () => {
   assert.equal(setSharePriority(items, 'a', true, 1), 1);
   assert.equal(items[0].priority, undefined);
   assert.equal(items[1].priority, 1);
+});
+
+test('stateAfterDelete: 切り替えの片付けは pending に戻し、試した回数を増やさない', () => {
+  const next = stateAfterDelete(item({ state: 'deleting', requeueAfterDelete: true, attempts: 2, note: 'x' }), 3);
+  assert.equal(next.state, 'pending');
+  assert.equal('attempts' in next, false);
+  assert.equal(next.requeueAfterDelete, undefined);
+  assert.equal('requeueAfterDelete' in next, true);
+  assert.equal(next.note, undefined);
+});
+
+test('stateAfterDelete: jdId があれば downloading', () => {
+  assert.equal(stateAfterDelete(item({ state: 'deleting', jdId: 'j' }), 3).state, 'downloading');
+});
+
+test('stateAfterDelete: 重複なら skipped', () => {
+  const next = stateAfterDelete(item({ state: 'deleting', duplicate: true }), 3);
+  assert.equal(next.state, 'skipped');
+  assert.equal(next.duplicate, undefined);
+});
+
+test('stateAfterDelete: それ以外は retry、試した回数が上限なら error', () => {
+  assert.equal(stateAfterDelete(item({ state: 'deleting', attempts: 1 }), 3).state, 'retry');
+  assert.equal(stateAfterDelete(item({ state: 'deleting', attempts: 3 }), 3).state, 'error');
 });

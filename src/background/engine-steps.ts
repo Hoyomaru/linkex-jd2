@@ -8,7 +8,7 @@ import { contentHash, formatBytes, savePathKey, unwrapFile, withNumber } from '.
 import { hasKnownExtension, nameWithDetectedType, SNIFF_BYTES } from '../shared/media-type';
 import { cdnObjectSize } from '../shared/jd2-status';
 import type { QueueItem } from '../shared/queue';
-import { adoptHanded, findOwnCopy, handedToJd } from '../shared/scheduler';
+import { adoptHanded, DUPLICATE_NOTE, findOwnCopy, handedToJd, stateAfterDelete } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, LinkexTrafficLimitError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
@@ -150,8 +150,6 @@ async function trafficUsedUp(): Promise<boolean> {
 
 // ---------- 直接と保存経由で共通の部品 ----------
 
-/** 重複で省く件のメモ（古い版では、保存経由の件の目印にもこの文言を使っていた） */
-const DUPLICATE_NOTE = '同じ中身をダウンロード済み';
 
 /** 同じ中身をダウンロード済みか（「もう一度ダウンロード」で強制した件は除く） */
 async function isDuplicate(item: QueueItem, hash: string | null): Promise<boolean> {
@@ -451,19 +449,8 @@ export async function stepDelete(item: QueueItem): Promise<void> {
 
   const after: Partial<QueueItem> = { destFileId: undefined, beforeIds: undefined, deleteAttempts: undefined };
   lap(item.id, '削除', t);
-  if (item.jdId) {
-    await updateItem(item.id, { ...after, state: 'downloading', note: undefined });
-    await logLaps(item);
-  } else if (item.duplicate || item.note === DUPLICATE_NOTE) {
-    // note で見分けるのは、古い版で削除中のまま残っている件のため
-    await updateItem(item.id, { ...after, state: 'skipped', duplicate: undefined });
-    await logEvent('info', `重複のため省略: ${item.name}`);
-  } else {
-    // 失敗したコピーを片付けた場合は、共有から保存し直す
-    await updateItem(item.id, {
-      ...after,
-      state: item.attempts >= MAX_ATTEMPTS ? 'error' : 'retry',
-      note: undefined,
-    });
-  }
+  const next = stateAfterDelete(item, MAX_ATTEMPTS);
+  await updateItem(item.id, { ...after, ...next });
+  if (next.state === 'downloading') await logLaps(item);
+  if (next.state === 'skipped') await logEvent('info', `重複のため省略: ${item.name}`);
 }

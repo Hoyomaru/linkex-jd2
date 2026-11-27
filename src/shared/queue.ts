@@ -76,6 +76,11 @@ export interface QueueItem {
   deleteAttempts?: number;
   /** 保存してから取る件で、コピーを作った後に重複と分かった（コピーを消したら skipped にする） */
   duplicate?: boolean;
+  /**
+   * アカウントを切り替える前の片付けでコピーを消している（消したら pending に戻し、新しいアカウントで取り直す。
+   * 試した回数には数えない）
+   */
+  requeueAfterDelete?: boolean;
   totalLength?: number;
   completedLength?: number;
   note?: string;

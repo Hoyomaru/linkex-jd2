@@ -148,3 +148,19 @@ export function findOwnCopy<T extends DriveFile>(fresh: T[], item: QueueItem, cl
 export function pickLeftovers<T extends { id: unknown }>(files: T[], claimed: Set<string>, isFolder: (f: T) => boolean): T[] {
   return files.filter((f) => f.id !== undefined && f.id !== null && !isFolder(f) && !claimed.has(String(f.id)));
 }
+
+/** 重複で省く件のメモ（古い版では、保存経由の件の目印にもこの文言を使っていた） */
+export const DUPLICATE_NOTE = '同じ中身をダウンロード済み';
+
+/**
+ * 自分のストレージのコピーを消し終えた件を、次にどの状態にするか。
+ * JD2 に渡し済みならダウンロード中、重複なら省略、アカウント切り替えの片付けなら待機中（試した回数は増やさない）、
+ * それ以外（失敗したコピーの片付け）なら保存し直す
+ */
+export function stateAfterDelete(item: QueueItem, maxAttempts: number): Pick<QueueItem, 'state'> & Partial<QueueItem> {
+  if (item.jdId) return { state: 'downloading', note: undefined };
+  // note で見分けるのは、古い版で削除中のまま残っている件のため
+  if (item.duplicate || item.note === DUPLICATE_NOTE) return { state: 'skipped', duplicate: undefined };
+  if (item.requeueAfterDelete) return { state: 'pending', requeueAfterDelete: undefined, note: undefined };
+  return { state: item.attempts >= maxAttempts ? 'error' : 'retry', note: undefined };
+}
