@@ -12,6 +12,8 @@ import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
 import { setupNotificationClick } from './notify';
 import { installOriginRule } from './origin-rule';
+import { loadRecords, readAccounts, updateRecord } from './linkex-accounts';
+import { accountWarnings } from '../shared/accounts';
 
 chrome.runtime.onMessage.addListener((message: Request, sender, sendResponse) => {
   handle(message, sender.tab?.id)
@@ -158,6 +160,25 @@ const handlers: Handlers = {
   'hashes.clear': () => clearHashes(),
   'settings.get': () => loadSettings(),
   'settings.set': (req) => saveSettings(req.patch),
+  'accounts.list': async () => {
+    const [snapshot, settings] = await Promise.all([readAccounts({ fresh: true }), loadSettings()]);
+    const records = await loadRecords();
+    return {
+      snapshot,
+      records,
+      disabled: settings.accountsDisabled,
+      switchAccounts: settings.switchAccounts,
+      // 一覧が読めないときは「消えた」と決めつけない
+      warnings: snapshot ? accountWarnings(snapshot, records, Date.now()) : [],
+    };
+  },
+  'accounts.setEnabled': async (req) => {
+    const disabled = new Set((await loadSettings()).accountsDisabled);
+    if (req.on) disabled.delete(req.uid);
+    else disabled.add(req.uid);
+    await saveSettings({ accountsDisabled: [...disabled] });
+  },
+  'accounts.forget': (req) => updateRecord(req.uid, null),
 };
 
 async function handle(req: Request, pageTabId?: number): Promise<unknown> {

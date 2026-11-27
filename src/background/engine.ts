@@ -186,7 +186,10 @@ async function runLoop(): Promise<void> {
     }
 
     // 周回の途中で止められていたら（ログイン切れ・一時停止など）、止まった理由を上書きしない
-    await writeEngine(statusMessage(items, downloading, waiting.length, settings.maxDownloads), (cur) => !cur.paused);
+    const state = statusMessage(items, downloading, waiting.length, settings.maxDownloads);
+    // アカウントが2つ以上あるときは、今どのアカウントで取っているかを添える
+    if (accountLabel) state.message = `${state.message}（${accountLabel}）`;
+    await writeEngine(state, (cur) => !cur.paused);
     // 担当が1つ終わったら、すぐ次の件を割り当てる
     await Promise.race([sleep(IDLE_WAIT_MS), ...workers.values()]);
   }
@@ -635,9 +638,12 @@ async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<
   await logEvent('info', `${why}、Linkexのアカウントを ${accountName(before, res.fromUid)} から ${accountName(after, sw.to)} に切り替えました`);
   if (sw.reason === 'keepAlive') await updateRecord(sw.to, { keepAliveAt: now, keepAliveStamp: stamp });
   knownUid = sw.to;
+  accountLabel = after && after.accounts.length >= 2 ? accountName(after, sw.to) : null;
 }
 
 let accountsWatchedAt = 0;
+/** 状況の文に添える今のアカウント名（アカウントが1つなら null） */
+let accountLabel: string | null = null;
 /** 拡張機能が知っている今のアカウント（ほかで切り替えられたことに気づくため） */
 let knownUid: string | null = null;
 
@@ -663,6 +669,7 @@ async function watchAccounts(switchOn: boolean, disabled: string[]): Promise<voi
     refreshFrame();
   }
   knownUid = s.currentUid;
+  accountLabel = s.accounts.length >= 2 ? accountName(s, s.currentUid) : null;
 
   const recs = await loadRecords();
   for (const [uid, rec] of Object.entries(recs)) {

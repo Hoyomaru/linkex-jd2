@@ -1,3 +1,4 @@
+import type { AccountRecords, AccountsSnapshot, AccountWarning } from './accounts';
 import { describeError } from './error-text';
 import type { Settings } from './settings';
 import type { WalkedFile } from './walk';
@@ -33,6 +34,12 @@ export type Request =
   | { type: 'queue.prioritize'; token: string; on: boolean }
   | { type: 'queue.clearFinished' }
   | { type: 'settings.get' }
+  /** Linkex Web版に覚えさせてあるアカウントの一覧と、拡張機能の記録 */
+  | { type: 'accounts.list' }
+  /** アカウントを切り替えに使うか */
+  | { type: 'accounts.setEnabled'; uid: string; on: boolean }
+  /** 一覧から消えたアカウントの記録を消す（知らせを出さなくする） */
+  | { type: 'accounts.forget'; uid: string }
   | { type: 'settings.set'; patch: Partial<Settings> };
 
 /**
@@ -68,6 +75,19 @@ export interface ResponseMap {
   'queue.clearFinished': void;
   'settings.get': Settings;
   'settings.set': Settings;
+  'accounts.list': AccountsView;
+  'accounts.setEnabled': void;
+  'accounts.forget': void;
+}
+
+/** accounts.list の応答 */
+export interface AccountsView {
+  /** 読めなければ null */
+  snapshot: AccountsSnapshot | null;
+  records: AccountRecords;
+  disabled: string[];
+  switchAccounts: boolean;
+  warnings: AccountWarning[];
 }
 
 export type Response<T = unknown> = { ok: true; data: T } | { ok: false; error: string; detail?: unknown };

@@ -3,6 +3,7 @@ import { formatBytes, isFolder, linkexApi, unwrapFile } from '../shared/linkex-a
 import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
+import { setupAccountsView } from './accounts-view';
 import { setMeter } from '../ui/summary';
 import { secondPress } from '../ui/confirm';
 import { HASHES_KEY } from '../shared/queue';
@@ -98,6 +99,7 @@ window.addEventListener('hashchange', showTab);
 showTab();
 
 // ---------- Linkex の状態 ----------
+const accountsView = setupAccountsView(log);
 
 async function refreshLinkex() {
   try {
@@ -109,7 +111,9 @@ async function refreshLinkex() {
     queueView.setTraffic(traffic);
     $('traffic-metric').title = `直近24時間の転送量（目安）。リセット ${reset}`;
     setMeter($('traffic-bar'), traffic.usedTraffic, traffic.totalTraffic);
+    void accountsView.refresh({ used: traffic.usedTraffic, total: traffic.totalTraffic });
   } catch (e) {
+    void accountsView.refresh(null);
     $('usage-text').textContent = '取得できません';
     $('usage-text').title = (e as Error).message;
     $('traffic-text').textContent = '-';

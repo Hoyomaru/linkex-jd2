@@ -51,6 +51,7 @@
         <span id="notice-text"></span>
         <button id="notice-close" class="small">閉じる</button>
       </div>
+      <div id="account-warnings" class="account-warnings" role="status" hidden></div>
       <!-- ========== キュー ========== -->
       <div data-page="queue" class="page">
         <section class="panel">
@@ -164,6 +165,14 @@
             <button id="linkex-open">Linkexのタブを表示</button>
             <button id="linkex-refresh">容量・転送量を更新</button>
           </div>
+          <h3 class="sub-heading">アカウント</h3>
+          <label class="check full"><input type="checkbox" id="switch-accounts" /> 転送量が尽きたら別のアカウントに切り替える（期限の近いアカウントから使い、期限が近いアカウントは使って延ばす）</label>
+          <table id="accounts-table" class="accounts-table" hidden>
+            <thead><tr><th>切り替えに使う</th><th></th><th>転送量</th><th>期限</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="accounts-empty" class="hint" hidden></p>
+          <p class="hint">アカウントの足し方：Linkex で右上のアイコン →「ログアウト」→ 別のアカウントでログインすると、ここに足されます。拡張機能が使う Linkex（このブラウザ）で行ってください。期限は Linkex が最後にログイン情報を更新してから20日です。</p>
         </section>
 
         <section class="panel" style="margin-top: 16px">
