@@ -6,7 +6,7 @@
 import { formatBytes, isFolder, unwrapFile } from '../shared/files';
 import { Jd2ConnectionError } from '../shared/jd2-request';
 import { FINISHED_STATES, type EngineState, type QueueItem } from '../shared/queue';
-import { IN_STORAGE_STATES, pickLeftovers, pickStarts, resetAfterSwitch } from '../shared/scheduler';
+import { IN_STORAGE_STATES, pickLeftovers, pickStarts, requeueBeforeSwitch, resetAfterSwitch } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, linkexOkAt, LinkexTrafficLimitError, LinkexTransientError } from './api';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, noteJdDown, resetRuntime, runtime, sleep, stopWithNotice } from './engine-runtime';
@@ -365,8 +365,8 @@ async function processItem(item: QueueItem): Promise<void> {
         await stepFindCopy(item);
         break;
       case 'copied':
-        // 転送量が尽きてアカウントを切り替える前は、コピーを消して待機中に戻す（新しいアカウントで取り直す）
-        if (runtime.switching?.reason === 'traffic') {
+        // アカウントを切り替える前は、コピーを消して待機中に戻す（新しいアカウントで取り直す）
+        if (requeueBeforeSwitch(item, runtime.switching)) {
           await updateItem(item.id, { state: 'deleting', requeueAfterDelete: true, note: SWITCH_CLEANUP_NOTE });
           return;
         }

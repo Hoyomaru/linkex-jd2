@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, resetAfterSwitch, setSharePriority, stateAfterDelete, type PickContext } from '../src/shared/scheduler.ts';
+import { adoptHanded, findOwnCopy, handedToJd, pickLeftovers, pickStarts, requeueBeforeSwitch, resetAfterSwitch, setSharePriority, stateAfterDelete, type PickContext } from '../src/shared/scheduler.ts';
 import type { QueueItem } from '../src/shared/queue.ts';
 
 const GB = 1024 ** 3;
@@ -282,4 +282,12 @@ test('resetAfterSwitch: それ以外は待機中に戻し、試した回数は�
   assert.equal('attempts' in next, false);
   assert.equal('destFileId' in next, true);
   assert.equal('copiedAt' in next, true);
+});
+
+test('requeueBeforeSwitch: 切り替えの準備中なら、理由を問わずコピーありの件は消して取り直す', () => {
+  assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), { reason: 'traffic' }), true);
+  // 期限を延ばすための切り替えでも、JD2の空き待ちのコピーがあると準備が終わらないので消す（保存し直しに転送量は使わない）
+  assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), { reason: 'keepAlive' }), true);
+  assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), null), false);
+  assert.equal(requeueBeforeSwitch(item({ state: 'copying' }), { reason: 'traffic' }), false);
 });
