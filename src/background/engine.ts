@@ -16,7 +16,7 @@ import { pingJd } from './jd2';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { refreshFrame } from './linkex-frame';
 import { accountName, loadRecords, noteExhausted, noteTraffic, readAccounts, switchAccount, updateRecord } from './linkex-accounts';
-import { nextResume, pickNextAccount, RECHECK_MS } from '../shared/accounts';
+import { nextResume, pickKeepAlive, pickNextAccount, RECHECK_MS } from '../shared/accounts';
 import { notify } from './notify';
 import { logEvent, readEngine, readQueue, updateItem, writeEngine } from './store';
 
@@ -34,6 +34,10 @@ const SWITCH_PREP_LIMIT_MS = 10 * 60_000;
 const SWITCH_CLEANUP_NOTE = 'アカウント切り替えの前にコピーを削除中';
 /** 全部のアカウントが尽きているとき、再開を試せるかを見る間隔 */
 const RESUME_CHECK_MS = 60_000;
+/** アカウントの一覧を見る間隔（手で切り替えられていないか・延命が要るか・延命できたか） */
+const ACCOUNTS_WATCH_MS = 60_000;
+/** 延命のために切り替えてから、期限が延びたかを確かめるまでの時間 */
+const KEEP_ALIVE_VERIFY_MS = 10 * 60_000;
 /** 残ったコピーの片付けの間隔（容量が足りないと言われたら、次に手が空いたときすぐ片付ける） */
 const CLEANUP_INTERVAL_MS = 10 * 60_000;
 /** 容量が足りないと言われてから、新しい件を始めずに待つ時間 */
@@ -147,6 +151,8 @@ async function runLoop(): Promise<void> {
       // 保存せずに取るときは、先に保存しておくものがない
       prefetch: settings.directDownload ? 0 : Math.max(0, settings.prefetchItems),
     };
+    // 手で切り替えられていないか・延命が要るかを見る（1分に1回まで）
+    if (!runtime.switching) await watchAccounts(settings.switchAccounts, settings.accountsDisabled);
     // アカウントを切り替える準備中なら、Linkex 側で処理中の件が片付きしだい切り替える（切り替えたら一覧を読み直す）
     if (runtime.switching) {
       if (await advanceSwitch(prep.length)) continue;
@@ -628,6 +634,54 @@ async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<
   const why = sw.reason === 'traffic' ? '転送量が尽きたため' : '期限を延ばすため';
   await logEvent('info', `${why}、Linkexのアカウントを ${accountName(before, res.fromUid)} から ${accountName(after, sw.to)} に切り替えました`);
   if (sw.reason === 'keepAlive') await updateRecord(sw.to, { keepAliveAt: now, keepAliveStamp: stamp });
+  knownUid = sw.to;
+}
+
+let accountsWatchedAt = 0;
+/** 拡張機能が知っている今のアカウント（ほかで切り替えられたことに気づくため） */
+let knownUid: string | null = null;
+
+/**
+ * 1分に1回、アカウントの一覧を見る。
+ * - ユーザーが Web版で切り替えていたら、そのアカウントで続ける（転送量や容量の見込みを捨てる）
+ * - 延命のために切り替えてから10分たったアカウントは、期限が延びたかを確かめる
+ * - 期限が近いアカウントがあれば、延命のための切り替えの準備に入る
+ */
+async function watchAccounts(switchOn: boolean, disabled: string[]): Promise<void> {
+  const now = Date.now();
+  if (now - accountsWatchedAt < ACCOUNTS_WATCH_MS) return;
+  accountsWatchedAt = now;
+  const s = await readAccounts();
+  if (!s) return;
+
+  if (knownUid !== null && s.currentUid !== knownUid) {
+    await logEvent('info', `Linkexのアカウントが ${accountName(s, s.currentUid)} に切り替えられたので、そのアカウントで続けます`);
+    runtime.trafficWaitUntil = 0;
+    runtime.trafficLeft = null;
+    runtime.budget = null;
+    runtime.resumeHint = null;
+    refreshFrame();
+  }
+  knownUid = s.currentUid;
+
+  const recs = await loadRecords();
+  for (const [uid, rec] of Object.entries(recs)) {
+    if (rec.keepAliveStamp === undefined || rec.keepAliveAt === undefined || now - rec.keepAliveAt < KEEP_ALIVE_VERIFY_MS) continue;
+    const stamp = s.accounts.find((a) => a.uid === uid)?.stampAt ?? 0;
+    if (stamp > rec.keepAliveStamp) {
+      await updateRecord(uid, { keepAliveStamp: undefined, keepAliveFailed: undefined });
+      await logEvent('info', `${accountName(s, uid)} の期限を延ばしました`);
+    } else {
+      await updateRecord(uid, { keepAliveStamp: undefined, keepAliveFailed: true });
+      await logEvent('warn', `${accountName(s, uid)} を使いましたが、期限は延びませんでした。Linkexでログインし直すと延びます`);
+    }
+  }
+
+  if (!switchOn) return;
+  const to = pickKeepAlive(s, recs, disabled, now);
+  if (!to) return;
+  runtime.switching = { reason: 'keepAlive', since: now, to };
+  await logEvent('info', `${accountName(s, to)} の期限が近いので、Linkex側で処理中の件が片付いたら切り替えて使います`);
 }
 
 let resumeCheckedAt = 0;
