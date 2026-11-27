@@ -16,7 +16,7 @@ import { pingJd } from './jd2';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { refreshFrame } from './linkex-frame';
 import { accountName, loadRecords, noteExhausted, noteTraffic, readAccounts, switchAccount, updateRecord } from './linkex-accounts';
-import { nextResume, pickKeepAlive, pickNextAccount, RECHECK_MS } from '../shared/accounts';
+import { nextResume, pickNextAccount, RECHECK_MS } from '../shared/accounts';
 import { notify } from './notify';
 import { logEvent, readEngine, readQueue, updateItem, writeEngine } from './store';
 
@@ -34,10 +34,8 @@ const SWITCH_PREP_LIMIT_MS = 10 * 60_000;
 const SWITCH_CLEANUP_NOTE = 'アカウント切り替えの前にコピーを削除中';
 /** 全部のアカウントが尽きているとき、再開を試せるかを見る間隔 */
 const RESUME_CHECK_MS = 60_000;
-/** アカウントの一覧を見る間隔（手で切り替えられていないか・延命が要るか・延命できたか） */
+/** アカウントの一覧を見る間隔（手で切り替えられていないか） */
 const ACCOUNTS_WATCH_MS = 60_000;
-/** 延命のために切り替えてから、期限が延びたかを確かめるまでの時間 */
-const KEEP_ALIVE_VERIFY_MS = 10 * 60_000;
 /** 残ったコピーの片付けの間隔（容量が足りないと言われたら、次に手が空いたときすぐ片付ける） */
 const CLEANUP_INTERVAL_MS = 10 * 60_000;
 /** 容量が足りないと言われてから、新しい件を始めずに待つ時間 */
@@ -151,8 +149,8 @@ async function runLoop(): Promise<void> {
       // 保存せずに取るときは、先に保存しておくものがない
       prefetch: settings.directDownload ? 0 : Math.max(0, settings.prefetchItems),
     };
-    // 手で切り替えられていないか・延命が要るかを見る（1分に1回まで）
-    if (!runtime.switching) await watchAccounts(settings.switchAccounts, settings.accountsDisabled);
+    // 手で切り替えられていないかを見る（1分に1回まで）
+    if (!runtime.switching) await watchAccounts();
     // アカウントを切り替える準備中なら、Linkex 側で処理中の件が片付きしだい切り替える（切り替えたら一覧を読み直す）
     if (runtime.switching) {
       if (await advanceSwitch(prep.length)) continue;
@@ -555,7 +553,7 @@ async function onTrafficExhausted(): Promise<boolean> {
 }
 
 /**
- * 切り替えの準備を進める。Linkex 側で処理中の件が片付いたら（転送量のためなら、待ちの上限を過ぎても）切り替える。
+ * 切り替えの準備を進める。Linkex 側で処理中の件が片付いたら（待ちの上限を過ぎても）切り替える。
  * 切り替えを試したら true
  */
 async function advanceSwitch(prepCount: number): Promise<boolean> {
@@ -563,16 +561,6 @@ async function advanceSwitch(prepCount: number): Promise<boolean> {
   if (!sw) return false;
   const busy = workers.size > 0 || prepCount > 0;
   if (busy && Date.now() - sw.since < SWITCH_PREP_LIMIT_MS) return false;
-  if (busy && sw.reason === 'keepAlive') {
-    // 期限を延ばすための切り替えは急がない。24時間後にまた試す
-    runtime.switching = null;
-    await updateRecord(sw.to, { keepAliveAt: Date.now() });
-    await logEvent(
-      'warn',
-      `期限を延ばすための切り替えは、Linkex側で処理中の件が${SWITCH_PREP_LIMIT_MS / 60_000}分以内に片付かなかったため見送りました`,
-    );
-    return false;
-  }
   await finishSwitch(sw);
   return true;
 }
@@ -583,18 +571,13 @@ async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<
   await releaseOldCopies('切り替えの前に片付けが終わらなかった');
 
   const before = await readAccounts();
-  const stamp = before?.accounts.find((a) => a.uid === sw.to)?.stampAt ?? 0;
   const res = await switchAccount(sw.to);
   runtime.switching = null;
   if (!res.ok) {
     await logEvent('warn', `Linkexのアカウントを ${accountName(before, sw.to)} に切り替えられませんでした: ${res.error}`);
-    if (sw.reason === 'keepAlive') {
-      await updateRecord(sw.to, { keepAliveAt: now });
-    } else {
-      // しばらくはこのアカウントを選ばない。転送量の上限待ちに戻り、次の確認でほかのアカウントを選ぶ
-      await updateRecord(sw.to, { checkAgainAt: now + RECHECK_MS });
-      runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
-    }
+    // しばらくはこのアカウントを選ばない。転送量の上限待ちに戻り、次の確認でほかのアカウントを選ぶ
+    await updateRecord(sw.to, { checkAgainAt: now + RECHECK_MS });
+    runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
     return;
   }
   const after = await readAccounts();
@@ -603,9 +586,7 @@ async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<
   runtime.budget = null;
   runtime.cleanedAt = 0;
   runtime.resumeHint = null;
-  const why = sw.reason === 'traffic' ? '転送量が尽きたため' : '期限を延ばすため';
-  await logEvent('info', `${why}、Linkexのアカウントを ${accountName(before, res.fromUid)} から ${accountName(after, sw.to)} に切り替えました`);
-  if (sw.reason === 'keepAlive') await updateRecord(sw.to, { keepAliveAt: now, keepAliveStamp: stamp });
+  await logEvent('info', `転送量が尽きたため、Linkexのアカウントを ${accountName(before, res.fromUid)} から ${accountName(after, sw.to)} に切り替えました`);
   knownUid = sw.to;
   accountLabel = after && after.accounts.length >= 2 ? accountName(after, sw.to) : null;
 }
@@ -617,12 +598,11 @@ let accountLabel: string | null = null;
 let knownUid: string | null = null;
 
 /**
- * 1分に1回、アカウントの一覧を見る。
- * - ユーザーが Web版で切り替えていたら、そのアカウントで続ける（転送量や容量の見込みを捨てる）
- * - 延命のために切り替えてから10分たったアカウントは、期限が延びたかを確かめる
- * - 期限が近いアカウントがあれば、延命のための切り替えの準備に入る
+ * 1分に1回、アカウントの一覧を見て、ユーザーが Web版で切り替えていたら、そのアカウントで続ける
+ * （前のアカウントのコピーの印を外し、転送量や容量の見込みを捨てる）。
+ * 今使っていないアカウントの期限の延長と転送量の確認は、account-maintenance.ts が1時間ごとに行う
  */
-async function watchAccounts(switchOn: boolean, disabled: string[]): Promise<void> {
+async function watchAccounts(): Promise<void> {
   const now = Date.now();
   if (now - accountsWatchedAt < ACCOUNTS_WATCH_MS) return;
   accountsWatchedAt = now;
@@ -641,25 +621,6 @@ async function watchAccounts(switchOn: boolean, disabled: string[]): Promise<voi
   }
   knownUid = s.currentUid;
   accountLabel = s.accounts.length >= 2 ? accountName(s, s.currentUid) : null;
-
-  const recs = await loadRecords();
-  for (const [uid, rec] of Object.entries(recs)) {
-    if (rec.keepAliveStamp === undefined || rec.keepAliveAt === undefined || now - rec.keepAliveAt < KEEP_ALIVE_VERIFY_MS) continue;
-    const stamp = s.accounts.find((a) => a.uid === uid)?.stampAt ?? 0;
-    if (stamp > rec.keepAliveStamp) {
-      await updateRecord(uid, { keepAliveStamp: undefined, keepAliveFailed: undefined });
-      await logEvent('info', `${accountName(s, uid)} の期限を延ばしました`);
-    } else {
-      await updateRecord(uid, { keepAliveStamp: undefined, keepAliveFailed: true });
-      await logEvent('warn', `${accountName(s, uid)} を使いましたが、期限は延びませんでした。Linkexでログインし直すと延びます`);
-    }
-  }
-
-  if (!switchOn) return;
-  const to = pickKeepAlive(s, recs, disabled, now);
-  if (!to) return;
-  runtime.switching = { reason: 'keepAlive', since: now, to };
-  await logEvent('info', `${accountName(s, to)} の期限が近いので、Linkex側で処理中の件が片付いたら切り替えて使います`);
 }
 
 let resumeCheckedAt = 0;

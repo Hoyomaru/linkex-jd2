@@ -4,7 +4,8 @@ import {
   accountWarnings,
   isFresh,
   nextResume,
-  pickKeepAlive,
+  needsRefresh,
+  accountsToCheck,
   pickNextAccount,
   type AccountRecords,
   type AccountsSnapshot,
@@ -91,31 +92,35 @@ test('nextResume: 使えるアカウントが無ければ null', () => {
   assert.equal(nextResume(s, { B: { exhaustedAt: now - H } }, ['B'], now), null);
 });
 
-test('pickKeepAlive: 残り72時間未満で、尽きておらず、今のアカウント以外', () => {
-  const near = now - (480 - 50) * H; // 残り50時間
-  assert.equal(pickKeepAlive(snap('A', acc('A'), acc('B', { stampAt: near })), {}, [], now), 'B');
-  assert.equal(pickKeepAlive(snap('B', acc('A'), acc('B', { stampAt: near })), {}, [], now), null);
-  assert.equal(pickKeepAlive(snap('A', acc('A'), acc('B', { stampAt: now - (480 - 73) * H })), {}, [], now), null);
+test('needsRefresh: 今使っていないアカウントで、期限まで10日を切ったら更新する', () => {
+  const s = snap('A', acc('A', { stampAt: now - 15 * D }), acc('B', { stampAt: now - 11 * D }), acc('C', { stampAt: now - 9 * D }));
+  assert.equal(needsRefresh(s, s.accounts[1], now), true); // 残り9日
+  assert.equal(needsRefresh(s, s.accounts[2], now), false); // 残り11日
+  assert.equal(needsRefresh(s, s.accounts[0], now), false); // 今のアカウントは Web版が自分で更新する
 });
 
-test('pickKeepAlive: 同じアカウントは24時間に1回まで', () => {
-  const s = snap('A', acc('A'), acc('B', { stampAt: now - (480 - 50) * H }));
-  assert.equal(pickKeepAlive(s, { B: { keepAliveAt: now - 23 * H } }, [], now), null);
-  assert.equal(pickKeepAlive(s, { B: { keepAliveAt: now - 25 * H } }, [], now), 'B');
+test('needsRefresh: 時刻が無い・読めない・ログイン情報が無いものは更新しない', () => {
+  const s = snap('A', acc('A'), acc('B', { stampAt: 0 }), acc('C', { stampAt: -1 }), acc('D', { stampAt: now - 15 * D, hasSecret: false }));
+  for (const a of s.accounts.slice(1)) assert.equal(needsRefresh(s, a, now), false);
 });
 
-test('pickKeepAlive: 尽きているもの・オフのものは選ばない', () => {
-  const s = snap('A', acc('A'), acc('B', { stampAt: now - (480 - 50) * H }));
-  assert.equal(pickKeepAlive(s, { B: { exhaustedAt: now - H } }, [], now), null);
-  assert.equal(pickKeepAlive(s, {}, ['B'], now), null);
+test('accountsToCheck: 尽きた・今使っていない・1時間以上確かめていないもの', () => {
+  const s = snap('A', acc('A'), acc('B'), acc('C'), acc('D'), acc('E'));
+  const recs: AccountRecords = {
+    A: { exhaustedAt: now - H },
+    B: { exhaustedAt: now - H },
+    C: { exhaustedAt: now - 3 * H, lastTraffic: { used: 1, total: 1, at: now - 30 * 60 * 1000 } },
+    D: { exhaustedAt: now - 3 * H, lastTraffic: { used: 1, total: 1, at: now - 61 * 60 * 1000 } },
+  };
+  assert.deepEqual(accountsToCheck(s, recs, now), ['B', 'D']);
 });
 
 test('accountWarnings: 期限が近い・延命に失敗・一覧から消えた', () => {
   const s = snap('A', acc('A', { name: 'あ' }), acc('B', { name: 'べ', stampAt: now - (480 - 50) * H }));
-  const recs: AccountRecords = { A: { keepAliveFailed: true }, GONE: { name: 'ごーん' } };
+  const recs: AccountRecords = { A: { refreshFailed: true }, GONE: { name: 'ごーん' } };
   const w = accountWarnings(s, recs, now);
   assert.deepEqual(w, [
-    { kind: 'keepAliveFailed', uid: 'A', name: 'あ' },
+    { kind: 'refreshFailed', uid: 'A', name: 'あ' },
     { kind: 'expiring', uid: 'B', name: 'べ', hoursLeft: 50 },
     { kind: 'gone', uid: 'GONE', name: 'ごーん' },
   ]);

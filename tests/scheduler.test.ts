@@ -284,10 +284,8 @@ test('resetAfterSwitch: それ以外は待機中に戻し、試した回数は�
   assert.equal('copiedAt' in next, true);
 });
 
-test('requeueBeforeSwitch: 切り替えの準備中なら、理由を問わずコピーありの件は消して取り直す', () => {
+test('requeueBeforeSwitch: 切り替えの準備中なら、コピーありの件は消して取り直す', () => {
   assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), { reason: 'traffic' }), true);
-  // 期限を延ばすための切り替えでも、JD2の空き待ちのコピーがあると準備が終わらないので消す（保存し直しに転送量は使わない）
-  assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), { reason: 'keepAlive' }), true);
   assert.equal(requeueBeforeSwitch(item({ state: 'copied' }), null), false);
   assert.equal(requeueBeforeSwitch(item({ state: 'copying' }), { reason: 'traffic' }), false);
 });

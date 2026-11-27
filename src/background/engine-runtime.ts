@@ -37,10 +37,10 @@ export interface Runtime {
   /** 前の周回で、まだ終わっていない件があった共有（共有1つ分が終わったら知らせるため） */
   openShares: Set<string>;
   /**
-   * Linkex のアカウントを切り替える準備中（新しい件を始めず、Linkex 側で処理中の件が片付くのを待つ）。
-   * traffic: 転送量が尽きたため（保存済みのコピーは消して取り直す） / keepAlive: 期限を延ばすため（コピーは最後まで進める）
+   * 転送量が尽きて、Linkex のアカウントを切り替える準備中
+   * （新しい件を始めず、保存済みのコピーは消して取り直し、Linkex 側で処理中の件が片付くのを待つ）
    */
-  switching: { reason: 'traffic' | 'keepAlive'; since: number; to: string } | null;
+  switching: { reason: 'traffic'; since: number; to: string } | null;
   /** 全部のアカウントが尽きているとき、次に再開を試すアカウントの名前と時刻（表示用） */
   resumeHint: { name: string; at: number } | null;
 }

@@ -168,11 +168,10 @@ export function resetAfterSwitch(item: QueueItem): Pick<QueueItem, 'state'> & Pa
 }
 
 /**
- * アカウントを切り替える準備中に、コピーありの件を消して待機中に戻すか。
- * 転送量が尽きたときは URL が出ないので消す。期限を延ばすための切り替えでも、JD2 の空き待ちのコピー（先読み）が
- * 残ると準備が終わらないので消す（保存し直しに転送量は使わない）
+ * アカウントを切り替える準備中に、コピーありの件を消して待機中に戻すか
+ * （転送量が尽きて URL が出ないうえ、前のアカウントのコピーは新しいアカウントでは使えない。保存し直しに転送量は使わない）
  */
-export function requeueBeforeSwitch(item: QueueItem, switching: { reason: 'traffic' | 'keepAlive' } | null): boolean {
+export function requeueBeforeSwitch(item: QueueItem, switching: { reason: 'traffic' } | null): boolean {
   return switching !== null && item.state === 'copied';
 }
 

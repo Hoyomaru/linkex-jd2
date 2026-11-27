@@ -38,10 +38,10 @@ export function warningText(w: AccountWarning): string {
   switch (w.kind) {
     case 'expiring': {
       const span = w.hoursLeft >= 24 ? `${Math.floor(w.hoursLeft / 24)}日（${w.hoursLeft}時間）` : `${w.hoursLeft}時間`;
-      return `${w.name} はあと${span}で Linkex の一覧から消えます。処理を動かしていれば、自動で使って期限を延ばします`;
+      return `${w.name} はあと${span}で Linkex の一覧から消えます。Edge を開いていれば、1時間以内に拡張機能がログイン情報を更新して延ばします`;
     }
-    case 'keepAliveFailed':
-      return `${w.name} の期限を延ばせませんでした。Linkex で ${w.name} に切り替えて使うか、ログインし直してください`;
+    case 'refreshFailed':
+      return `${w.name} のログイン情報を更新できず、期限を延ばせませんでした。Linkex で ${w.name} にログインし直してください`;
     case 'gone':
       return `${w.name} が Linkex の一覧から消えました。使うには、ログインし直して足してください`;
   }

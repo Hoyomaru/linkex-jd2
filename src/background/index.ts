@@ -12,6 +12,7 @@ import { watchBadge } from './badge';
 import { createMenus, setupMenuClicks } from './menus';
 import { setupNotificationClick } from './notify';
 import { installOriginRule } from './origin-rule';
+import { maintainAccounts } from './account-maintenance';
 import { loadRecords, readAccounts, updateRecord } from './linkex-accounts';
 import { accountWarnings } from '../shared/accounts';
 
@@ -34,6 +35,8 @@ void chrome.alarms.get('tick').then((alarm) => {
 void resumeIfRunning();
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== 'tick') return;
+  // 今使っていないアカウントの期限の延長と、尽きたアカウントの転送量の確認（1時間ごと）
+  void maintainAccounts();
   const engine = await readEngine();
   if (!engine.paused) kick();
   else await refreshDownloads().catch(() => undefined);

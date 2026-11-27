@@ -5,6 +5,7 @@ import {
   linkexSwitchAccount,
   type BridgeRequest,
 } from '../background/linkex-bridge';
+import { accountTraffic, findDriveClient, refreshAccount } from './account-ops';
 
 /**
  * 拡張機能の裏のページ（offscreen.html）に埋め込まれた Linkex のドライブの中で動く（MAIN world）。
@@ -20,7 +21,11 @@ export type FrameRequest =
   /** Web版に覚えさせてあるアカウントの一覧（トークンは返さない） */
   | { kind: 'accounts' }
   /** Web版と同じ書き換えでアカウントを切り替える */
-  | { kind: 'switch'; toUid: string; now: number };
+  | { kind: 'switch'; toUid: string; now: number }
+  /** 今使っていないアカウントのログイン情報をその場で更新する（トークンは返さない） */
+  | { kind: 'refreshAccount'; uid: string; now: number }
+  /** 切り替えずに、そのアカウントの転送量を聞く */
+  | { kind: 'accountTraffic'; uid: string };
 
 /** 処理中の呼び出し（返事がないときに、どこまで進んだかを診断で返す） */
 const inflight = new Map<number, { path: string; stage: string; at: number }>();
@@ -90,6 +95,15 @@ async function handle(body: FrameRequest): Promise<unknown> {
       return linkexReadAccounts();
     case 'switch':
       return linkexSwitchAccount(body.toUid, body.now);
+    // 通信部品が見つからなければ返事をしない（Service Worker 側は「埋め込みが使えない」として、次の見回りに回す）
+    case 'refreshAccount': {
+      const client = await findDriveClient();
+      return client ? refreshAccount(body.uid, body.now, client) : undefined;
+    }
+    case 'accountTraffic': {
+      const client = await findDriveClient();
+      return client ? accountTraffic(body.uid, client) : undefined;
+    }
     case 'progress': {
       const p = (window as any).__linkexJd2WalkProgress?.[body.token];
       return p && !p.done ? { files: p.files, bytes: p.bytes, folders: p.folders } : null;

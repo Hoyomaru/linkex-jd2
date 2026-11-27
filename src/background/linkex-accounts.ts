@@ -1,9 +1,10 @@
 /**
  * Linkex Web版に覚えさせてあるアカウントを、Service Worker から読み・切り替える。
  * ログイン情報の保存と更新は Web版に任せ、拡張機能は切り替え先（currentUid）を指定するだけ。
- * 判定（どれに切り替えるか・期限・延命）は shared/accounts.ts にある。
+ * 判定（どれに切り替えるか・期限・更新するか）は shared/accounts.ts にある。
  */
 import { RECHECK_MS, TRAFFIC_WINDOW_MS, type AccountRecord, type AccountRecords, type AccountsSnapshot } from '../shared/accounts';
+import type { RefreshResult, TrafficResult } from '../content/account-ops';
 import { linkexReadAccounts, linkexSwitchAccount } from './linkex-bridge';
 import { frameRequest, refreshFrame } from './linkex-frame';
 import { runInLinkexTab } from './linkex-tab';
@@ -132,4 +133,17 @@ export async function noteExhausted(s: AccountsSnapshot | null, now: number): Pr
 export function accountName(s: AccountsSnapshot | null, uid: string | null | undefined): string {
   if (!uid) return '不明なアカウント';
   return s?.accounts.find((a) => a.uid === uid)?.name ?? uid;
+}
+
+/** 今使っていないアカウントのログイン情報を、埋め込みページの中で更新する。埋め込みが使えなければ null */
+export async function refreshAccountTokens(uid: string): Promise<RefreshResult | null> {
+  const res = await frameRequest<RefreshResult>({ kind: 'refreshAccount', uid, now: Date.now() }, 20_000);
+  if (res?.value.ok) cached = null; // 期限の基準時刻が変わったので、一覧を読み直す
+  return res?.value ?? null;
+}
+
+/** 切り替えずに、そのアカウントの転送量を聞く。埋め込みが使えなければ null */
+export async function checkAccountTraffic(uid: string): Promise<TrafficResult | null> {
+  const res = await frameRequest<TrafficResult>({ kind: 'accountTraffic', uid }, 20_000);
+  return res?.value ?? null;
 }

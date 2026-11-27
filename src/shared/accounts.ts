@@ -37,12 +37,12 @@ export interface AccountRecord {
   exhaustedAt?: number;
   /** 尽きた後に確かめてまだ尽きていたとき、次に確かめてよい時刻 */
   checkAgainAt?: number;
+  /** 最後に確かめた転送量と、その時刻 */
   lastTraffic?: { used: number; total: number; at: number };
-  /** 延命のために切り替えた時刻 */
-  keepAliveAt?: number;
-  /** 延命のために切り替えたときの期限の基準時刻（これより進めば延びた） */
-  keepAliveStamp?: number;
-  keepAliveFailed?: boolean;
+  /** ログイン情報をその場で更新した時刻 */
+  refreshedAt?: number;
+  /** ログイン情報の更新に失敗した（ログインし直すまで期限を延ばせない） */
+  refreshFailed?: boolean;
 }
 export type AccountRecords = Record<string, AccountRecord>;
 
@@ -54,10 +54,15 @@ export const EXPIRY_MARGIN_MS = 60 * 60 * 1000;
 export const TRAFFIC_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** 試してまだ尽きていたら、次に試すまでの時間 */
 export const RECHECK_MS = 60 * 60 * 1000;
-/** 期限までこれを切ったら、延命のために使う */
-export const KEEP_ALIVE_BEFORE_MS = 72 * 60 * 60 * 1000;
-/** 同じアカウントへの延命の切り替えの間隔 */
-export const KEEP_ALIVE_EVERY_MS = 24 * 60 * 60 * 1000;
+/**
+ * 期限（20日）までこれを切ったら、今使っていないアカウントのログイン情報をその場で更新する。
+ * token は10日で切れるので、その少し前（9日目）に更新して、転送量の確認にも使えるようにしておく
+ */
+export const REFRESH_BEFORE_MS = 11 * 24 * 60 * 60 * 1000;
+/** 尽きたアカウントの転送量を、切り替えずに確かめる間隔 */
+export const TRAFFIC_CHECK_MS = 60 * 60 * 1000;
+/** 期限までこれを切ったら、ダッシュボードで知らせる */
+export const EXPIRY_WARN_MS = 72 * 60 * 60 * 1000;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -85,7 +90,7 @@ const usable = (a: LinkexAccount, recs: AccountRecords, disabled: string[], now:
 
 const byExpiry = (a: LinkexAccount, b: LinkexAccount) => expiresAt(a) - expiresAt(b);
 
-/** 転送量が尽きたときの切り替え先。使えるもののうち期限がいちばん近いもの（使うことで延命にもなる） */
+/** 転送量が尽きたときの切り替え先。使えるもののうち期限がいちばん近いもの */
 export function pickNextAccount(s: AccountsSnapshot, recs: AccountRecords, disabled: string[], now: number): string | null {
   const candidates = s.accounts.filter((a) => a.uid !== s.currentUid && usable(a, recs, disabled, now)).sort(byExpiry);
   return candidates[0]?.uid ?? null;
@@ -110,31 +115,38 @@ export function nextResume(
   return best;
 }
 
-/** 延命のために切り替えるアカウント（期限まで72時間を切り、尽きておらず、24時間以内に延命していないもの） */
-export function pickKeepAlive(s: AccountsSnapshot, recs: AccountRecords, disabled: string[], now: number): string | null {
-  const candidates = s.accounts
+/**
+ * 今使っていないアカウントのログイン情報を、その場で更新するか（期限まで11日を切ったもの）。
+ * 今使っているアカウントは Web版が自分で更新する。期限の基準時刻が無い・読めないものは更新しない
+ */
+export function needsRefresh(s: AccountsSnapshot, a: LinkexAccount, now: number): boolean {
+  if (a.uid === s.currentUid || !a.hasSecret || a.stampAt <= 0) return false;
+  return expiresAt(a) - now < REFRESH_BEFORE_MS;
+}
+
+/** 切り替えずに転送量を確かめるアカウント（尽きた印があり、今使っておらず、1時間以上確かめていないもの） */
+export function accountsToCheck(s: AccountsSnapshot, recs: AccountRecords, now: number): string[] {
+  return s.accounts
     .filter((a) => {
-      if (a.uid === s.currentUid || !usable(a, recs, disabled, now)) return false;
-      if (expiresAt(a) - now >= KEEP_ALIVE_BEFORE_MS) return false;
-      const last = recs[a.uid]?.keepAliveAt;
-      return last === undefined || now - last >= KEEP_ALIVE_EVERY_MS;
+      const rec = recs[a.uid];
+      if (a.uid === s.currentUid || rec?.exhaustedAt === undefined) return false;
+      return rec.lastTraffic === undefined || now - rec.lastTraffic.at >= TRAFFIC_CHECK_MS;
     })
-    .sort(byExpiry);
-  return candidates[0]?.uid ?? null;
+    .map((a) => a.uid);
 }
 
 export type AccountWarning =
   | { kind: 'expiring'; uid: string; name: string; hoursLeft: number }
-  | { kind: 'keepAliveFailed'; uid: string; name: string }
+  | { kind: 'refreshFailed'; uid: string; name: string }
   | { kind: 'gone'; uid: string; name: string };
 
-/** ダッシュボードに出す注意。一覧の順に、延命の失敗・期限が近いもの、最後に一覧から消えたもの */
+/** ダッシュボードに出す注意。一覧の順に、更新の失敗・期限が近いもの、最後に一覧から消えたもの */
 export function accountWarnings(s: AccountsSnapshot, recs: AccountRecords, now: number): AccountWarning[] {
   const out: AccountWarning[] = [];
   for (const a of s.accounts) {
-    if (recs[a.uid]?.keepAliveFailed) out.push({ kind: 'keepAliveFailed', uid: a.uid, name: a.name });
+    if (recs[a.uid]?.refreshFailed) out.push({ kind: 'refreshFailed', uid: a.uid, name: a.name });
     const left = expiresAt(a) - now;
-    if (a.hasSecret && left > 0 && left < KEEP_ALIVE_BEFORE_MS) {
+    if (a.hasSecret && left > 0 && left < EXPIRY_WARN_MS) {
       out.push({ kind: 'expiring', uid: a.uid, name: a.name, hoursLeft: Math.floor(left / HOUR) });
     }
   }
