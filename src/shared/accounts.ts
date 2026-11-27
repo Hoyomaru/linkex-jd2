@@ -23,7 +23,10 @@ export interface LinkexAccount {
 
 export interface AccountsSnapshot {
   currentUid: string | null;
+  /** Web版の「アカウントを切り替え」に出るもの（ログイン情報があり、期限が切れていないもの） */
   accounts: LinkexAccount[];
+  /** Web版の「編集 → ⊖」で外された（ログイン情報だけ消された）アカウントの uid */
+  removed?: string[];
 }
 
 /** 拡張機能がアカウントごとに覚えておくこと */

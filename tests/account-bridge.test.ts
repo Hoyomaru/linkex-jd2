@@ -77,19 +77,17 @@ test('parse: 2つのアカウント', () => {
         cachedTraffic: { used: 0, total: 10737418240 },
       },
     ],
+    removed: [],
   });
   assert.equal(JSON.stringify(s).includes('SECRET'), false);
 });
 
 test('parse: 形の崩れた値', () => {
   fakePage(JSON.stringify({ currentUid: 5 }));
-  assert.deepEqual(linkexReadAccounts(), { currentUid: null, accounts: [] });
+  assert.deepEqual(linkexReadAccounts(), { currentUid: null, accounts: [], removed: [] });
 
-  fakePage(JSON.stringify({ currentUid: '1', users: { '1': { profile: 'x', _meta: { updatedAt: 'x' } } } }));
-  assert.deepEqual(linkexReadAccounts(), {
-    currentUid: '1',
-    accounts: [{ uid: '1', name: '1', email: '', status: null, stampAt: -1, hasSecret: false, cachedTraffic: null }],
-  });
+  fakePage(JSON.stringify({ currentUid: '1', users: { '1': { profile: 'x', credentials: { token: 't' }, _meta: { updatedAt: 'x' } } } }));
+  assert.deepEqual(linkexReadAccounts(), { currentUid: '1', accounts: [], removed: [] });
 
   fakePage('{not json');
   assert.equal(linkexReadAccounts(), null);
@@ -152,4 +150,22 @@ test('parse: 時刻が無ければ 0（Web版と同じく期限なし）', () =>
   delete (c.users['1'] as any)._meta;
   fakePage(JSON.stringify(c));
   assert.equal(linkexReadAccounts()!.accounts[0].stampAt, 0);
+});
+
+test('parse: Web版で外した（ログイン情報の無い）アカウントは一覧に出さず、removed に入れる', () => {
+  const c = cache();
+  delete (c.users['1'] as any).credentials; // Web版の「編集 → ⊖」（removeCachedAccountRecord）はログイン情報だけを消す
+  fakePage(JSON.stringify(c));
+  const s = linkexReadAccounts()!;
+  assert.deepEqual(s.accounts.map((a) => a.uid), ['2']);
+  assert.deepEqual(s.removed, ['1']);
+});
+
+test('parse: 期限切れのアカウントは一覧に出さない（Web版の一覧と同じ）', () => {
+  const c = cache();
+  (c.users['1'].credentials as any).refreshTokenUpdatedAt = Date.now() - 481 * H;
+  fakePage(JSON.stringify(c));
+  const s = linkexReadAccounts()!;
+  assert.deepEqual(s.accounts.map((a) => a.uid), ['2']);
+  assert.deepEqual(s.removed, []);
 });

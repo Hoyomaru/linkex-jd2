@@ -74,9 +74,13 @@ export function updateRecord(uid: string, patch: Partial<AccountRecord> | null):
   return next;
 }
 
-/** 一覧にあるアカウントの表示名を記録に書く（一覧から消えたときに名前で知らせるため） */
+/**
+ * 一覧にあるアカウントの表示名を記録に書く（一覧から消えたときに名前で知らせるため）。
+ * Web版の「編集 → ⊖」で外されたアカウントは、わざと外したものなので記録ごと消す（「消えました」と知らせない）
+ */
 export async function rememberAccounts(s: AccountsSnapshot): Promise<void> {
   const all = await loadRecords();
+  for (const uid of s.removed ?? []) if (all[uid]) await updateRecord(uid, null);
   for (const a of s.accounts) {
     if (all[a.uid]?.name !== a.name) await updateRecord(a.uid, { name: a.name });
   }

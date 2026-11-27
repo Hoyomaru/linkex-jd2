@@ -278,7 +278,9 @@ export async function linkexBridgeCall(req: BridgeRequest): Promise<BridgeResult
  * linkexBridgeCall と同じく、外の変数や関数を参照してはいけない。
  * 一覧が無い・読めなければ null
  */
-export function linkexReadAccounts(): AccountsSnapshot | null {
+export function linkexReadAccounts(now: number = Date.now()): AccountsSnapshot | null {
+  /** Web版の REFRESH_TOKEN_MEMORY_MS（shared/accounts.ts と同じ値） */
+  const MEMORY_MS = 480 * 60 * 60 * 1000;
   let root: any;
   try {
     const raw = localStorage.getItem('linkex_user_cache_v1');
@@ -291,7 +293,10 @@ export function linkexReadAccounts(): AccountsSnapshot | null {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0);
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const users = root.users && typeof root.users === 'object' ? root.users : {};
-  const accounts = Object.entries(users).map(([uid, value]) => {
+  // Web版の「アカウントを切り替え」（listSwitchableAccounts）と同じく、ログイン情報の無いもの（「編集 → ⊖」で外されたもの）と
+  // 期限切れのもの（Web版が次に一覧を開いたときに消す）は出さない
+  const removed: string[] = [];
+  const all = Object.entries(users).map(([uid, value]) => {
     const u: any = value && typeof value === 'object' ? value : {};
     const profile = u.profile && typeof u.profile === 'object' ? u.profile : {};
     const cred = u.credentials && typeof u.credentials === 'object' ? u.credentials : {};
@@ -313,7 +318,14 @@ export function linkexReadAccounts(): AccountsSnapshot | null {
           : null,
     } as AccountsSnapshot['accounts'][number];
   });
-  return { currentUid: typeof root.currentUid === 'string' ? root.currentUid : null, accounts };
+  const accounts = all.filter((a) => {
+    if (!a.hasSecret) {
+      removed.push(a.uid);
+      return false;
+    }
+    return a.stampAt === 0 || (a.stampAt > 0 && now - a.stampAt <= MEMORY_MS);
+  });
+  return { currentUid: typeof root.currentUid === 'string' ? root.currentUid : null, accounts, removed };
 }
 
 /**
