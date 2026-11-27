@@ -11,6 +11,7 @@ import type { QueueItem } from '../shared/queue';
 import { adoptHanded, DUPLICATE_NOTE, findOwnCopy, handedToJd, stateAfterDelete } from '../shared/scheduler';
 import { loadSettings } from '../shared/settings';
 import { api, collectPages, DISK_SPACE_FULL, LinkexError, LinkexTrafficLimitError } from './api';
+import { noteUrlIssued } from './linkex-accounts';
 import { errorText, IDLE_WAIT_MS, MAX_ATTEMPTS, runtime, sleep } from './engine-runtime';
 import { addDownload, findHanded } from './jd2';
 import { isDownloaded, logEvent, mutateQueue, readQueue, updateItem } from './store';
@@ -120,6 +121,7 @@ async function sendDirect(item: QueueItem): Promise<boolean> {
     throw e;
   }
   t = lap(item.id, 'URL取得(直接)', t);
+  void noteUrlIssued();
   const { url, hash, fileSize } = readDownloadable(data, item);
   if (await isDuplicate(item, hash)) {
     await skipDuplicate(item, hash);
@@ -408,6 +410,7 @@ export async function stepSend(item: QueueItem): Promise<void> {
 async function sendToJd(item: QueueItem): Promise<true> {
   const t = Date.now();
   const data = await api.fileGet(item.destFileId!);
+  void noteUrlIssued();
   const { url, hash, fileSize } = readDownloadable(data, item);
   const since = lap(item.id, 'URL取得', t);
 

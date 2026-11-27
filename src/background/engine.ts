@@ -15,6 +15,8 @@ import { refreshDownloads } from './jd-monitor';
 import { pingJd } from './jd2';
 import { LinkexLoginError, takeFrozenReloads } from './linkex-tab';
 import { refreshFrame } from './linkex-frame';
+import { accountName, loadRecords, noteExhausted, noteTraffic, readAccounts, switchAccount, updateRecord } from './linkex-accounts';
+import { nextResume, pickNextAccount, RECHECK_MS } from '../shared/accounts';
 import { notify } from './notify';
 import { logEvent, readEngine, readQueue, updateItem, writeEngine } from './store';
 
@@ -26,6 +28,12 @@ const TRAFFIC_CACHE_MS = 60_000;
 const TRAFFIC_WAIT_MESSAGE = '転送量の上限に達したため待機中';
 /** 転送量の上限で URL を断られた件に付けるメモ */
 const TRAFFIC_ITEM_NOTE = '転送量の上限待ち';
+/** アカウントを切り替える前に、Linkex 側で処理中の件が片付くのを待つ上限 */
+const SWITCH_PREP_LIMIT_MS = 10 * 60_000;
+/** 切り替えの前にコピーを消している件のメモ */
+const SWITCH_CLEANUP_NOTE = 'アカウント切り替えの前にコピーを削除中';
+/** 全部のアカウントが尽きているとき、再開を試せるかを見る間隔 */
+const RESUME_CHECK_MS = 60_000;
 /** 残ったコピーの片付けの間隔（容量が足りないと言われたら、次に手が空いたときすぐ片付ける） */
 const CLEANUP_INTERVAL_MS = 10 * 60_000;
 /** 容量が足りないと言われてから、新しい件を始めずに待つ時間 */
@@ -139,16 +147,28 @@ async function runLoop(): Promise<void> {
       // 保存せずに取るときは、先に保存しておくものがない
       prefetch: settings.directDownload ? 0 : Math.max(0, settings.prefetchItems),
     };
-    let picks = pickStarts(items, { ...ctx, allowNew: Date.now() >= runtime.capacityWaitUntil && Date.now() >= runtime.trafficWaitUntil });
+    // アカウントを切り替える準備中なら、Linkex 側で処理中の件が片付きしだい切り替える（切り替えたら一覧を読み直す）
+    if (runtime.switching) {
+      if (await advanceSwitch(prep.length)) continue;
+    } else if (Date.now() < runtime.trafficWaitUntil) {
+      // 転送量の上限待ちのあいだ、戻っていそうなほかのアカウントがあれば切り替えて確かめる
+      await maybeResume();
+    }
+
+    const allowNew = !runtime.switching && Date.now() >= runtime.capacityWaitUntil && Date.now() >= runtime.trafficWaitUntil;
+    let picks = pickStarts(items, { ...ctx, allowNew });
     const newPicks = waiting.filter((w) => picks.includes(w.id));
     const newBytes = newPicks.reduce((sum, w) => sum + (w.size ?? 0), 0);
     if (newPicks.length > 0 && settings.pauseOnTrafficLimit && (await trafficExhausted(newBytes))) {
-      // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、
-      // ログは待機に入った最初の1回だけ書く
-      if (engine.message !== TRAFFIC_WAIT_MESSAGE) {
-        await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
+      // 別のアカウントに切り替えられるなら、切り替えの準備に入る。切り替えられなければ待つ
+      if (!(await onTrafficExhausted())) {
+        // 待機中に Service Worker が止められると1分ごとの見回りでここに戻ってくるので、
+        // ログは待機に入った最初の1回だけ書く
+        if (!engine.message.startsWith(TRAFFIC_WAIT_MESSAGE)) {
+          await logEvent('warn', '転送量の上限に達したため待機します（5分ごとに確認）');
+        }
+        runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
       }
-      runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
       picks = pickStarts(items, { ...ctx, allowNew: false });
     }
     for (const id of picks) {
@@ -173,7 +193,10 @@ function statusMessage(
   waiting: number,
   maxDownloads: number,
 ): Pick<EngineState, 'status' | 'message'> {
-  if (Date.now() < runtime.trafficWaitUntil && workers.size === 0) return { status: 'waiting', message: TRAFFIC_WAIT_MESSAGE };
+  if (runtime.switching) {
+    return { status: 'running', message: `Linkexのアカウントを切り替える準備中（Linkex側で処理中 ${workers.size}件）` };
+  }
+  if (Date.now() < runtime.trafficWaitUntil && workers.size === 0) return { status: 'waiting', message: trafficWaitMessage() };
   const parts: string[] = [];
   if (workers.size > 0) {
     const first = items.find((i) => workers.has(i.id));
@@ -307,6 +330,7 @@ async function trafficExhausted(startBytes: number): Promise<boolean> {
   }
   try {
     const t = await api.traffic();
+    void noteTraffic(t);
     // 上限なし扱いのアカウント（usedTraffic が負）や、上限が分からないときは尽きない扱い
     const limited = t.usedTraffic >= 0 && t.totalTraffic > 0;
     const left = limited ? t.totalTraffic - t.usedTraffic : Infinity;
@@ -332,6 +356,11 @@ async function processItem(item: QueueItem): Promise<void> {
         await stepFindCopy(item);
         break;
       case 'copied':
+        // 転送量が尽きてアカウントを切り替える前は、コピーを消して待機中に戻す（新しいアカウントで取り直す）
+        if (runtime.switching?.reason === 'traffic') {
+          await updateItem(item.id, { state: 'deleting', requeueAfterDelete: true, note: SWITCH_CLEANUP_NOTE });
+          return;
+        }
         // 転送量の上限待ちのあいだは URL を発行しない（断られるだけなので、コピーは置いたまま待つ）
         if (Date.now() < runtime.trafficWaitUntil) {
           if (item.note !== TRAFFIC_ITEM_NOTE) await updateItem(item.id, { note: TRAFFIC_ITEM_NOTE });
@@ -388,6 +417,11 @@ async function processItem(item: QueueItem): Promise<void> {
       return;
     }
     if (e instanceof LinkexTrafficLimitError) {
+      // 別のアカウントに切り替えられるなら、切り替えの準備に入る（この件は次の周回で片付けるか、新しいアカウントで取る）
+      if (await onTrafficExhausted()) {
+        await updateItem(item.id, { note: 'アカウントの切り替え待ち' });
+        return;
+      }
       // 件ごとの失敗には数えず、新しい件を始めずに待つ（保存済みのコピーは消さずに置いておく）。
       // 待っている間に、ほかの件が同じ理由で断られてもログは1回だけ
       if (Date.now() >= runtime.trafficWaitUntil) {
@@ -401,6 +435,15 @@ async function processItem(item: QueueItem): Promise<void> {
     if (e instanceof LinkexLoginError || /AUTH_FAILED/.test(errorText(e))) {
       // ログイン切れやJD2側の問題は件ごとの失敗に数えず、全体を止めて知らせる
       await stopWithNotice(errorText(e));
+      return;
+    }
+    if (runtime.switching?.reason === 'traffic' && item.state === 'copying') {
+      // 切り替える前にコピーが見つからなかった。新しいアカウントで取り直す（前のアカウントにコピーが残ることがある）
+      await updateItem(item.id, { state: 'pending', beforeIds: undefined, copyStartedAt: undefined, copiedAt: undefined, note: undefined });
+      await logEvent(
+        'warn',
+        `アカウントを切り替える前に、保存したコピーが見つかりませんでした（前のアカウントに残る場合があります）: ${item.name} — ${errorText(e)}`,
+      );
       return;
     }
     await fail(item, errorText(e));
@@ -469,4 +512,144 @@ async function failDelete(item: QueueItem, message: string): Promise<void> {
     'warn',
     `コピーを${MAX_DELETE_ATTEMPTS}回削除できなかったため、残したままダウンロードを見届けます: ${item.name} — ${message}`,
   );
+}
+
+/** 上限待ちの表示。全部のアカウントが尽きているときは、次に再開を試す時刻とアカウントを添える */
+function trafficWaitMessage(): string {
+  const hint = runtime.resumeHint;
+  if (!hint || hint.at <= Date.now()) return TRAFFIC_WAIT_MESSAGE;
+  const d = new Date(hint.at);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = `${sameDay ? '' : `${d.getMonth() + 1}/${d.getDate()} `}${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${TRAFFIC_WAIT_MESSAGE}（${time}ごろに ${hint.name} で再開）`;
+}
+
+/**
+ * 今のアカウントの転送量が尽きた。尽きたことを記録し、別のアカウントに切り替えられるなら切り替えの準備に入る。
+ * 準備に入った（または入っている）なら true、切り替えられないなら false（今までどおり待つ）
+ */
+async function onTrafficExhausted(): Promise<boolean> {
+  const now = Date.now();
+  const s = await readAccounts();
+  await noteExhausted(s, now);
+  if (runtime.switching?.reason === 'traffic') return true;
+  const settings = await loadSettings();
+  if (!settings.switchAccounts || !s) return false;
+  const to = pickNextAccount(s, await loadRecords(), settings.accountsDisabled, now);
+  if (!to) return false;
+  runtime.switching = { reason: 'traffic', since: now, to };
+  await logEvent(
+    'warn',
+    `${accountName(s, s.currentUid)} の転送量が尽きたため、Linkex側で処理中の件を片付けてから ${accountName(s, to)} に切り替えます`,
+  );
+  return true;
+}
+
+/**
+ * 切り替えの準備を進める。Linkex 側で処理中の件が片付いたら（転送量のためなら、待ちの上限を過ぎても）切り替える。
+ * 切り替えを試したら true
+ */
+async function advanceSwitch(prepCount: number): Promise<boolean> {
+  const sw = runtime.switching;
+  if (!sw) return false;
+  const busy = workers.size > 0 || prepCount > 0;
+  if (busy && Date.now() - sw.since < SWITCH_PREP_LIMIT_MS) return false;
+  if (busy && sw.reason === 'keepAlive') {
+    // 期限を延ばすための切り替えは急がない。24時間後にまた試す
+    runtime.switching = null;
+    await updateRecord(sw.to, { keepAliveAt: Date.now() });
+    await logEvent(
+      'warn',
+      `期限を延ばすための切り替えは、Linkex側で処理中の件が${SWITCH_PREP_LIMIT_MS / 60_000}分以内に片付かなかったため見送りました`,
+    );
+    return false;
+  }
+  await finishSwitch(sw);
+  return true;
+}
+
+/** アカウントを切り替え、転送量や容量の見込みを捨てて続ける */
+async function finishSwitch(sw: NonNullable<typeof runtime.switching>): Promise<void> {
+  const now = Date.now();
+  // 片付けが間に合わなかった件は、前のアカウントのコピーの印を外す（新しいアカウントでは使えないため）
+  const leftovers = (await readQueue()).filter((i) => IN_STORAGE_STATES.includes(i.state));
+  for (const i of leftovers) {
+    await updateItem(
+      i.id,
+      i.jdId
+        ? {
+            state: 'downloading',
+            destFileId: undefined,
+            beforeIds: undefined,
+            deleteAttempts: undefined,
+            requeueAfterDelete: undefined,
+            note: 'コピーを削除できませんでした（前のアカウントのストレージに残っています）',
+          }
+        : {
+            state: 'pending',
+            destFileId: undefined,
+            beforeIds: undefined,
+            copyStartedAt: undefined,
+            copiedAt: undefined,
+            duplicate: undefined,
+            requeueAfterDelete: undefined,
+            note: undefined,
+          },
+    );
+  }
+  if (leftovers.length > 0) {
+    await logEvent(
+      'warn',
+      `切り替えの前に片付けが終わらなかった ${leftovers.length}件は、前のアカウントにコピーが残っている場合があります（新しいアカウントで取り直します）`,
+    );
+  }
+
+  const before = await readAccounts();
+  const stamp = before?.accounts.find((a) => a.uid === sw.to)?.stampAt ?? 0;
+  const res = await switchAccount(sw.to);
+  runtime.switching = null;
+  if (!res.ok) {
+    await logEvent('warn', `Linkexのアカウントを ${accountName(before, sw.to)} に切り替えられませんでした: ${res.error}`);
+    if (sw.reason === 'keepAlive') {
+      await updateRecord(sw.to, { keepAliveAt: now });
+    } else {
+      // しばらくはこのアカウントを選ばない。転送量の上限待ちに戻り、次の確認でほかのアカウントを選ぶ
+      await updateRecord(sw.to, { checkAgainAt: now + RECHECK_MS });
+      runtime.trafficWaitUntil = Date.now() + TRAFFIC_RECHECK_MS;
+    }
+    return;
+  }
+  const after = await readAccounts();
+  runtime.trafficWaitUntil = 0;
+  runtime.trafficLeft = null;
+  runtime.budget = null;
+  runtime.cleanedAt = 0;
+  runtime.resumeHint = null;
+  const why = sw.reason === 'traffic' ? '転送量が尽きたため' : '期限を延ばすため';
+  await logEvent('info', `${why}、Linkexのアカウントを ${accountName(before, res.fromUid)} から ${accountName(after, sw.to)} に切り替えました`);
+  if (sw.reason === 'keepAlive') await updateRecord(sw.to, { keepAliveAt: now, keepAliveStamp: stamp });
+}
+
+let resumeCheckedAt = 0;
+/**
+ * 全部のアカウントが尽きて待っているとき、いちばん早く戻りそうなアカウントを表示用に覚え、
+ * その時刻を過ぎていれば切り替えの準備に入る（今のアカウントなら、今までどおり5分ごとの確認に任せる）
+ */
+async function maybeResume(): Promise<void> {
+  const now = Date.now();
+  if (now - resumeCheckedAt < RESUME_CHECK_MS) return;
+  resumeCheckedAt = now;
+  const settings = await loadSettings();
+  if (!settings.switchAccounts) {
+    runtime.resumeHint = null;
+    return;
+  }
+  const s = await readAccounts();
+  if (!s) return;
+  const next = nextResume(s, await loadRecords(), settings.accountsDisabled, now);
+  runtime.resumeHint = next ? { name: accountName(s, next.uid), at: next.at } : null;
+  if (next && next.at <= now && next.uid !== s.currentUid) {
+    runtime.switching = { reason: 'traffic', since: now, to: next.uid };
+    await logEvent('info', `${accountName(s, next.uid)} の転送量が戻っている見込みなので、切り替えて確かめます`);
+  }
 }

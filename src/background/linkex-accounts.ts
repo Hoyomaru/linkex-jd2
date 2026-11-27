@@ -3,7 +3,7 @@
  * ログイン情報の保存と更新は Web版に任せ、拡張機能は切り替え先（currentUid）を指定するだけ。
  * 判定（どれに切り替えるか・期限・延命）は shared/accounts.ts にある。
  */
-import type { AccountRecord, AccountRecords, AccountsSnapshot } from '../shared/accounts';
+import { RECHECK_MS, TRAFFIC_WINDOW_MS, type AccountRecord, type AccountRecords, type AccountsSnapshot } from '../shared/accounts';
 import { linkexReadAccounts, linkexSwitchAccount } from './linkex-bridge';
 import { frameRequest, refreshFrame } from './linkex-frame';
 import { runInLinkexTab } from './linkex-tab';
@@ -80,4 +80,52 @@ export async function rememberAccounts(s: AccountsSnapshot): Promise<void> {
   for (const a of s.accounts) {
     if (all[a.uid]?.name !== a.name) await updateRecord(a.uid, { name: a.name });
   }
+}
+
+/** 転送量の残りがあると分かったら、今のアカウントの「尽きた」印を外す */
+function clearExhausted(rec: AccountRecord | undefined): Partial<AccountRecord> {
+  return rec?.exhaustedAt !== undefined || rec?.checkAgainAt !== undefined ? { exhaustedAt: undefined, checkAgainAt: undefined } : {};
+}
+
+/** /traffic で調べた今のアカウントの転送量を記録する。残りがあれば「尽きた」印を外す */
+export async function noteTraffic(t: { usedTraffic: number; totalTraffic: number }): Promise<void> {
+  const s = await readAccounts();
+  if (!s?.currentUid) return;
+  const limited = t.usedTraffic >= 0 && t.totalTraffic > 0;
+  const rec = (await loadRecords())[s.currentUid];
+  await updateRecord(s.currentUid, {
+    lastTraffic: { used: t.usedTraffic, total: t.totalTraffic, at: Date.now() },
+    ...(!limited || t.usedTraffic < t.totalTraffic ? clearExhausted(rec) : {}),
+  });
+}
+
+let urlOkAt = 0;
+/** URL が出た（転送量が残っている）ので、今のアカウントの「尽きた」印を外す。1分に1回まで */
+export async function noteUrlIssued(): Promise<void> {
+  if (Date.now() - urlOkAt < READ_CACHE_MS) return;
+  urlOkAt = Date.now();
+  const s = await readAccounts();
+  if (!s?.currentUid) return;
+  const patch = clearExhausted((await loadRecords())[s.currentUid]);
+  if (Object.keys(patch).length > 0) await updateRecord(s.currentUid, patch);
+}
+
+/**
+ * 今のアカウントの転送量が尽きたと記録する。初めてなら尽きた時刻を、
+ * 尽きてから24時間たって試したのにまだ尽きていたなら、次に試す時刻（1時間後）を書く
+ */
+export async function noteExhausted(s: AccountsSnapshot | null, now: number): Promise<void> {
+  if (!s?.currentUid) return;
+  const rec = (await loadRecords())[s.currentUid];
+  if (rec?.exhaustedAt === undefined) {
+    await updateRecord(s.currentUid, { exhaustedAt: now, checkAgainAt: undefined });
+  } else if (now - rec.exhaustedAt >= TRAFFIC_WINDOW_MS && (rec.checkAgainAt === undefined || now >= rec.checkAgainAt)) {
+    await updateRecord(s.currentUid, { checkAgainAt: now + RECHECK_MS });
+  }
+}
+
+/** 一覧の中のアカウントの表示名（無ければ uid） */
+export function accountName(s: AccountsSnapshot | null, uid: string | null | undefined): string {
+  if (!uid) return '不明なアカウント';
+  return s?.accounts.find((a) => a.uid === uid)?.name ?? uid;
 }
