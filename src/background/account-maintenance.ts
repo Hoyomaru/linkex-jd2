@@ -35,7 +35,7 @@ export async function maintainAccounts(): Promise<void> {
 
 /** 期限まで11日を切った、今使っていないアカウントのログイン情報を更新する */
 async function refreshExpiring(): Promise<void> {
-  const s = await readAccounts({ fresh: true });
+  const s = await readAccounts({ fresh: true, noNewTab: true });
   if (!s) return;
   const now = Date.now();
   for (const a of s.accounts) {
@@ -58,7 +58,7 @@ async function refreshExpiring(): Promise<void> {
 
 /** 尽きたアカウントの転送量を、切り替えずに確かめる。token が切れていたら更新してから1回だけ聞き直す */
 async function checkExhausted(): Promise<void> {
-  const s = await readAccounts({ fresh: true });
+  const s = await readAccounts({ fresh: true, noNewTab: true });
   if (!s) return;
   for (const uid of accountsToCheck(s, await loadRecords(), Date.now())) {
     let res = await checkAccountTraffic(uid);

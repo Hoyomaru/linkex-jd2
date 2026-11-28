@@ -5,7 +5,8 @@ import type { WalkedFile } from './walk';
 
 /** 画面（専用ページ・ポップアップ・共有ページのパネル）から Service Worker へ送るメッセージ */
 export type Request =
-  | { type: 'linkex.call'; method: 'get' | 'post'; path: string; params?: unknown; data?: unknown }
+  /** noNewTab: 表示のための呼び出し。埋め込みが使えなくても、固定タブを新しく開かない */
+  | { type: 'linkex.call'; method: 'get' | 'post'; path: string; params?: unknown; data?: unknown; noNewTab?: boolean }
   | { type: 'linkex.openTab' }
   | { type: 'jd.info' }
   | { type: 'jd.add'; url: string; dir?: string; out?: string }

@@ -95,7 +95,10 @@ type Handlers = {
 
 const handlers: Handlers = {
   'linkex.call': async (req) => {
-    const result = await callLinkex({ method: req.method, path: req.path, params: req.params, data: req.data });
+    const result = await callLinkex(
+      { method: req.method, path: req.path, params: req.params, data: req.data },
+      { noNewTab: req.noNewTab },
+    );
     if (!result.ok) {
       throw new Error(`${result.error}${result.detail ? ` ${JSON.stringify(result.detail)}` : ''}`);
     }
@@ -164,7 +167,7 @@ const handlers: Handlers = {
   'settings.get': () => loadSettings(),
   'settings.set': (req) => saveSettings(req.patch),
   'accounts.list': async () => {
-    const [snapshot, settings] = await Promise.all([readAccounts({ fresh: true }), loadSettings()]);
+    const [snapshot, settings] = await Promise.all([readAccounts({ fresh: true, noNewTab: true }), loadSettings()]);
     const records = await loadRecords();
     return {
       snapshot,

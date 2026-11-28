@@ -15,11 +15,17 @@ const READ_CACHE_MS = 60_000;
 
 let cached: { at: number; snapshot: AccountsSnapshot | null } | null = null;
 
-/** 一覧を読む。1分間は覚えた値を返す（fresh で読み直す）。読めなければ null */
-export async function readAccounts(opts: { fresh?: boolean } = {}): Promise<AccountsSnapshot | null> {
+/**
+ * 一覧を読む。1分間は覚えた値を返す（fresh で読み直す）。読めなければ null。
+ * noNewTab なら、埋め込みが使えなくても固定タブを新しく開かない（画面の表示や見回りのとき）
+ */
+export async function readAccounts(opts: { fresh?: boolean; noNewTab?: boolean } = {}): Promise<AccountsSnapshot | null> {
   if (!opts.fresh && cached && Date.now() - cached.at < READ_CACHE_MS) return cached.snapshot;
   const res =
-    (await frameRequest<AccountsSnapshot | null>({ kind: 'accounts' })) ?? (await runInLinkexTab(linkexReadAccounts, []));
+    (await frameRequest<AccountsSnapshot | null>({ kind: 'accounts' })) ??
+    (await runInLinkexTab(linkexReadAccounts, [], { noNewTab: opts.noNewTab }));
+  // タブを開かずに済ませて読めなかったときは覚えない（後で処理が呼んだときに、固定タブで読めるように）
+  if (!res && opts.noNewTab) return null;
   const snapshot = res?.value ?? null;
   cached = { at: Date.now(), snapshot };
   if (snapshot) await rememberAccounts(snapshot);

@@ -1,7 +1,7 @@
 import { formatBytes, formatEta, formatSpeed, percent } from '../shared/format';
 import { type TrafficInfo } from '../shared/estimate';
 import { bytesText, countChips, countText, etaText, leftText, overviewOf, percentHtml, renderEstimate, setMeter, speedText } from '../ui/summary';
-import { linkexApi } from '../shared/linkex-api';
+import { linkexPeek } from '../shared/linkex-api';
 import { send } from '../shared/messages';
 import { combinedTraffic, currentAccountName } from '../shared/accounts';
 import { extractShareUrls, parseShareToken } from '../shared/share-url';
@@ -311,7 +311,7 @@ pollJd((live, error) => {
 
 (async () => {
   try {
-    const [usage, t] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
+    const [usage, t] = await Promise.all([linkexPeek.usage(), linkexPeek.traffic()]);
     traffic = t;
     render();
     $('usage').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;

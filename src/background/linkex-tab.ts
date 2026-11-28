@@ -166,6 +166,25 @@ export async function ensureLinkexTab(): Promise<number> {
   return ensuring;
 }
 
+/**
+ * すでに開いていて使えるドライブのタブ（自分の固定タブか、ユーザーが開いたもの）。無ければ null で、新しくは開かない。
+ * 画面の表示や見回りのような、処理を動かしていないときの呼び出しで、固定タブを勝手に開かないために使う
+ */
+async function existingLinkexTab(): Promise<number | null> {
+  if (cachedTabId !== null) {
+    const tab = await chrome.tabs.get(cachedTabId).catch(() => undefined);
+    if (tab?.id !== undefined && isDrive(tab.url) && !tab.frozen && !tab.discarded && (tab.status === 'complete' || (await readyOnce(tab)))) {
+      return tab.id;
+    }
+  }
+  const found = await chrome.tabs.query({ url: DRIVE_PATTERN });
+  for (const tab of found.sort((a, b) => Number(b.pinned) - Number(a.pinned))) {
+    if (tab.id === undefined || tab.frozen || tab.discarded) continue;
+    if (tab.status === 'complete' || (await readyOnce(tab))) return tab.id;
+  }
+  return null;
+}
+
 async function findOrOpenTab(): Promise<number> {
   const saved = (await chrome.storage.session.get(TAB_KEY))[TAB_KEY] as number | undefined;
   let tab: chrome.tabs.Tab | undefined;
@@ -349,7 +368,11 @@ let lastCallAt = 0;
 let activeCalls = 0;
 const callWaiters: (() => void)[] = [];
 
-export function callLinkex(req: BridgeRequest): Promise<BridgeResult> {
+/**
+ * Linkex API を1回呼ぶ。noNewTab なら、埋め込みが使えないとき、すでに開いているドライブのタブでだけ呼び、
+ * 固定タブを新しくは開かない（どちらも使えなければ失敗にする）。画面の表示のための呼び出しで使う
+ */
+export function callLinkex(req: BridgeRequest, opts: { noNewTab?: boolean } = {}): Promise<BridgeResult> {
   // 始める順番は頼まれた順。空きができるまで、後の呼び出しも並んで待つ
   const begin = async () => {
     const { apiIntervalMs, parallelItems } = await loadSettings();
@@ -375,7 +398,8 @@ export function callLinkex(req: BridgeRequest): Promise<BridgeResult> {
     // まず裏の埋め込みページで呼ぶ。使えなければ固定タブで呼ぶ
     let result = await callViaFrame(req, mayResend(req));
     if (!result) {
-      const tabId = await ensureLinkexTab();
+      const tabId = opts.noNewTab ? await existingLinkexTab() : await ensureLinkexTab();
+      if (tabId === null) return { ok: false, error: FRAME_UNAVAILABLE };
       result = await execute(tabId, req);
       // ページの部品がまだ読み込まれていない場合は少し待って1回だけやり直す
       if (!result.ok && result.error === 'index_not_found') {
@@ -391,6 +415,9 @@ export function callLinkex(req: BridgeRequest): Promise<BridgeResult> {
     return result;
   }
 }
+
+/** 固定タブを開かない呼び出しで、埋め込みもタブも使えなかったときのエラー */
+export const FRAME_UNAVAILABLE = '裏の埋め込みページが今は使えず、開いているLinkexのタブもありません（処理を始めれば固定タブで続けます）';
 
 /** API呼び出し1回の待ち時間の上限 */
 const CALL_TIMEOUT_MS = 20_000;
@@ -542,9 +569,14 @@ function watchFrozen(tabId: number): { promise: Promise<never>; stop: () => void
  * ドライブの固定タブの中で関数を1つ実行する（埋め込みが使えないときの代わり）。
  * func は linkex-bridge.ts の関数と同じく、外の変数や関数を参照しないもの。使えなければ null
  */
-export async function runInLinkexTab<A extends unknown[], T>(func: (...args: A) => T, args: A): Promise<{ value: T } | null> {
+export async function runInLinkexTab<A extends unknown[], T>(
+  func: (...args: A) => T,
+  args: A,
+  opts: { noNewTab?: boolean } = {},
+): Promise<{ value: T } | null> {
   try {
-    const tabId = await ensureLinkexTab();
+    const tabId = opts.noNewTab ? await existingLinkexTab() : await ensureLinkexTab();
+    if (tabId === null) return null;
     const [injection] = await withTimeout(
       chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func, args }),
       CALL_TIMEOUT_MS,

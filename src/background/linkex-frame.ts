@@ -16,6 +16,10 @@ const CALL_TIMEOUT_MS = 20_000;
 const RETRY_AFTER_MS = 5 * 60_000;
 /** ページから20秒以上返事がなければ、共有の読み込みが止まっているとみなす */
 const WALK_STALL_MS = 20_000;
+/** 最後の返事からこれだけたっていたら、頼む前に埋め込みが応えるかを確かめる */
+const IDLE_CHECK_MS = 60_000;
+/** その確かめの待ち時間の上限 */
+const PING_TIMEOUT_MS = 1_500;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -48,18 +52,44 @@ async function ensureDocument(): Promise<void> {
   await creating;
 }
 
+/** 埋め込みの中の Linkex のページから最後に返事があった時刻 */
+let lastAliveAt = 0;
+
 function send<T>(body: FrameRequest, timeoutMs: number): Promise<T> {
-  return withTimeout(chrome.runtime.sendMessage({ target: 'linkex-frame', body }) as Promise<T>, timeoutMs);
+  return withTimeout(chrome.runtime.sendMessage({ target: 'linkex-frame', body }) as Promise<T>, timeoutMs).then((value) => {
+    // 空の返事は、埋め込みの中がまだ Linkex のページになっていないとき（ページは返事をしていない）
+    if (value !== undefined) lastAliveAt = Date.now();
+    return value;
+  });
 }
 
 /** 'ok': 使える / 'down': 使えないと分かっている（その時刻） */
 let state: { kind: 'ok' } | { kind: 'down'; at: number } | { kind: 'unknown' } = { kind: 'unknown' };
 let readying: Promise<boolean> | null = null;
+let checking: Promise<boolean> | null = null;
 
 /** 埋め込みが使えるようにする。使えなければ false */
 async function ensureFrame(): Promise<boolean> {
-  if (state.kind === 'ok') return true;
+  if (state.kind === 'ok') {
+    if (Date.now() - lastAliveAt < IDLE_CHECK_MS) return true;
+    checking ??= checkAlive().finally(() => (checking = null));
+    return checking;
+  }
   if (state.kind === 'down' && Date.now() - state.at < RETRY_AFTER_MS) return false;
+  readying ??= prepare().finally(() => (readying = null));
+  return readying;
+}
+
+/**
+ * しばらく使っていなかった埋め込みが、まだ応えるかを短く確かめる。
+ * 埋め込みの中のページは、スリープ中などにドライブ以外のページへ移ったり止まったりすることがあり、
+ * そのまま頼むと返事の待ちの上限（20秒）まで待ってしまう。応えなければ、固定タブに逃げずに作り直す
+ */
+async function checkAlive(): Promise<boolean> {
+  const res = await send<{ ready: boolean } | undefined>({ kind: 'ping' }, PING_TIMEOUT_MS).catch(() => undefined);
+  if (res?.ready) return true;
+  void logEvent('info', 'しばらく使っていなかった裏の埋め込みページが応答しないため、作り直します');
+  state = { kind: 'down', at: 0 };
   readying ??= prepare().finally(() => (readying = null));
   return readying;
 }

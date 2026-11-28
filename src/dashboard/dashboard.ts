@@ -1,5 +1,5 @@
 import { send } from '../shared/messages';
-import { formatBytes, isFolder, linkexApi, unwrapFile } from '../shared/linkex-api';
+import { formatBytes, isFolder, linkexApi, linkexPeek, unwrapFile } from '../shared/linkex-api';
 import type { Settings } from '../shared/settings';
 import { parseShareToken } from '../shared/share-url';
 import { setupQueueView } from './queue-view';
@@ -104,7 +104,7 @@ const accountsView = setupAccountsView(log);
 
 async function refreshLinkex() {
   try {
-    const [usage, traffic] = await Promise.all([linkexApi.usage(), linkexApi.traffic()]);
+    const [usage, traffic] = await Promise.all([linkexPeek.usage(), linkexPeek.traffic()]);
     $('usage-text').textContent = `${formatBytes(usage.usedSpace)} / ${formatBytes(usage.totalSpace)}`;
     setMeter($('usage-bar'), usage.usedSpace, usage.totalSpace);
     $('traffic-text').textContent = `${formatBytes(traffic.usedTraffic)} / ${formatBytes(traffic.totalTraffic)}`;
